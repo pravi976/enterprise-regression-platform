@@ -42,6 +42,8 @@ def print_console_report(results: list[TestExecutionResult]) -> None:
                 ]
             )
         )
+        for line in _format_difference_lines(result):
+            print(f"  {line}")
 
 
 def publish_github_actions_output(results: list[TestExecutionResult], output_dir: Path) -> None:
@@ -110,6 +112,24 @@ def _write_github_step_summary(results: list[TestExecutionResult], output_dir: P
             f"| {result.status.upper()} | {result.gate} | {result.service} | "
             f"{result.service_type} | `{result.test_id}` | {metadata_link} |"
         )
+    failed_results = [result for result in results if result.comparison and result.comparison.differences]
+    if failed_results:
+        lines.extend(
+            [
+                "",
+                "### Field-by-Field Differences",
+                "",
+                "| Test | JSON Path | Expected | Actual | Message |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for result in failed_results:
+            for difference in result.comparison.differences:
+                lines.append(
+                    f"| `{result.test_id}` | `{difference.path}` | "
+                    f"`{_compact_json(difference.expected)}` | `{_compact_json(difference.actual)}` | "
+                    f"{difference.message} |"
+                )
     with open(summary_path, "a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -122,6 +142,11 @@ def _emit_github_annotations(results: list[TestExecutionResult]) -> None:
             f"{result.service} {result.service_type} regression {result.status}; "
             f"duration_ms={result.duration_ms}"
         )
+        if result.comparison and result.comparison.differences:
+            message += " | differences: " + "; ".join(
+                f"{difference.path} expected={_compact_json(difference.expected)} actual={_compact_json(difference.actual)}"
+                for difference in result.comparison.differences[:5]
+            )
         level = "notice" if result.status == "passed" else "error"
         print(f"::{level} file={path},title={_escape_annotation(title)}::{_escape_annotation(message)}")
 
@@ -140,6 +165,23 @@ def _github_annotation_path(path: str | None) -> str:
 
 def _escape_annotation(value: str) -> str:
     return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C")
+
+
+def _format_difference_lines(result: TestExecutionResult) -> list[str]:
+    if not result.comparison or not result.comparison.differences:
+        return []
+    return [
+        "DIFF | "
+        f"path={difference.path} | "
+        f"expected={_compact_json(difference.expected)} | "
+        f"actual={_compact_json(difference.actual)} | "
+        f"message={difference.message}"
+        for difference in result.comparison.differences
+    ]
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
 class ReportWriter:
