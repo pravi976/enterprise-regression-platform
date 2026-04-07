@@ -76,5 +76,8 @@ Linux API hosting can use `systemd`; see `examples/deployment/regauto-dashboard.
 Windows scheduled execution can use Task Scheduler calling
 `examples/deployment/windows-scheduled-run.ps1`.
 
+For Azure without containers, deploy it as a Python service on an Azure VM using
+`docs/azure-vm-non-container-deployment.md`.
+
 For a complete local validation against `sample-producer` and `sample-consumer`, see
 `docs/testing-sample-producer-consumer.md`.

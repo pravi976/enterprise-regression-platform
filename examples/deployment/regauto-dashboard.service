@@ -7,9 +7,8 @@ Type=simple
 User=regauto
 Group=regauto
 WorkingDirectory=/opt/regauto/enterprise-regression-platform
-Environment=REGAUTO_DATABASE_URL=postgresql+psycopg://regression:change-me@db-host:5432/regression
-Environment=REGAUTO_API_KEY=change-me
-ExecStart=/opt/regauto/venv/bin/python -m uvicorn regauto.dashboard.api:app --host 127.0.0.1 --port 8080
+EnvironmentFile=/etc/regauto-dashboard.env
+ExecStart=/opt/regauto/venv/bin/python -m uvicorn regauto.dashboard.api:app --host 0.0.0.0 --port 8080
 Restart=always
 RestartSec=10
 
