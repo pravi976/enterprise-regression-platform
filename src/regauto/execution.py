@@ -37,6 +37,8 @@ class TestExecutionResult:
     tags: list[str] = field(default_factory=list)
     service_type: str = "unknown"
     failure_type: str | None = None
+    test_path: str | None = None
+    metadata_path: str | None = None
 
 
 class TestExecutor(ABC):
@@ -193,6 +195,8 @@ class ExecutionEngine:
             tags=test_case.tags,
             service_type=test_case.service_type,
             failure_type=failure_type,
+            test_path=str(test_case.path),
+            metadata_path=str(test_case.metadata_path or test_case.path / "metadata.yaml"),
         )
 
     def _load_json(self, path: Path) -> Any:

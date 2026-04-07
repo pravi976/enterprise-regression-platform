@@ -3,12 +3,53 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree.ElementTree import Element, ElementTree, SubElement
 
 from regauto.execution import TestExecutionResult
+
+
+def print_console_report(results: list[TestExecutionResult]) -> None:
+    """Print a readable report to stdout for CI logs and local runs."""
+    summary = summarize(results)
+    print("REGRESSION SUMMARY")
+    print(
+        " | ".join(
+            [
+                f"total={summary['total']}",
+                f"passed={summary['passed']}",
+                f"failed={summary['failed']}",
+                f"errored={summary['errored']}",
+                f"pass_rate={summary['pass_rate']}%",
+            ]
+        )
+    )
+    print("REGRESSION TEST RESULTS")
+    for result in results:
+        print(
+            " | ".join(
+                [
+                    f"status={result.status.upper()}",
+                    f"gate={result.gate}",
+                    f"service={result.service}",
+                    f"type={result.service_type}",
+                    f"test={result.test_id}",
+                    f"duration_ms={result.duration_ms}",
+                    f"metadata={result.metadata_path or ''}",
+                ]
+            )
+        )
+
+
+def publish_github_actions_output(results: list[TestExecutionResult], output_dir: Path) -> None:
+    """Publish job summary and clickable annotations when running in GitHub Actions."""
+    if os.getenv("GITHUB_ACTIONS") != "true":
+        return
+    _write_github_step_summary(results, output_dir)
+    _emit_github_annotations(results)
 
 
 def summarize(results: list[TestExecutionResult]) -> dict[str, object]:
@@ -35,6 +76,70 @@ def summarize(results: list[TestExecutionResult]) -> dict[str, object]:
 def should_fail_gate(results: list[TestExecutionResult]) -> bool:
     """Return True when CI should fail."""
     return any(result.status in {"failed", "error"} for result in results)
+
+
+def _write_github_step_summary(results: list[TestExecutionResult], output_dir: Path) -> None:
+    summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    summary = summarize(results)
+    lines = [
+        "## Enterprise Regression Results",
+        "",
+        f"- Total: `{summary['total']}`",
+        f"- Passed: `{summary['passed']}`",
+        f"- Failed: `{summary['failed']}`",
+        f"- Errored: `{summary['errored']}`",
+        f"- Pass rate: `{summary['pass_rate']}%`",
+        "",
+        "### Report Files",
+        "",
+        f"- `{output_dir / 'summary.json'}`",
+        f"- `{output_dir / 'results.json'}`",
+        f"- `{output_dir / 'junit.xml'}`",
+        "",
+        "### Test Results",
+        "",
+        "| Status | Gate | Service | Type | Test | Metadata |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for result in results:
+        metadata = _github_annotation_path(result.metadata_path)
+        metadata_link = f"[metadata.yaml]({metadata})" if metadata else ""
+        lines.append(
+            f"| {result.status.upper()} | {result.gate} | {result.service} | "
+            f"{result.service_type} | `{result.test_id}` | {metadata_link} |"
+        )
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+def _emit_github_annotations(results: list[TestExecutionResult]) -> None:
+    for result in results:
+        path = _github_annotation_path(result.metadata_path)
+        title = f"{result.gate} {result.status}: {result.test_id}"
+        message = (
+            f"{result.service} {result.service_type} regression {result.status}; "
+            f"duration_ms={result.duration_ms}"
+        )
+        level = "notice" if result.status == "passed" else "error"
+        print(f"::{level} file={path},title={_escape_annotation(title)}::{_escape_annotation(message)}")
+
+
+def _github_annotation_path(path: str | None) -> str:
+    if not path:
+        return "regression/config/regression.yaml"
+    workspace = os.getenv("GITHUB_WORKSPACE")
+    if workspace:
+        try:
+            return str(Path(path).resolve().relative_to(Path(workspace).resolve())).replace("\\", "/")
+        except ValueError:
+            pass
+    return path.replace("\\", "/")
+
+
+def _escape_annotation(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C")
 
 
 class ReportWriter:

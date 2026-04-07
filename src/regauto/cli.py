@@ -18,7 +18,13 @@ from regauto.execution import ExecutionEngine
 from regauto.impact import impacted_services
 from regauto.logging_config import configure_logging
 from regauto.persistence import persist_run, upsert_repository
-from regauto.reporting import ReportWriter, should_fail_gate, summarize
+from regauto.reporting import (
+    ReportWriter,
+    print_console_report,
+    publish_github_actions_output,
+    should_fail_gate,
+    summarize,
+)
 from regauto.source_control import CheckoutRequest, GitRepositoryManager
 
 app = typer.Typer(help="Enterprise regression automation CLI")
@@ -95,6 +101,8 @@ def _run(
         raise typer.Exit(code=2)
     results = ExecutionEngine().run(tests)
     written = ReportWriter().write(results, results_dir)
+    print_console_report(results)
+    publish_github_actions_output(results, results_dir)
     summary = summarize(results)
     console.print(summary)
     console.print({name: str(path) for name, path in written.items()})
