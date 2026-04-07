@@ -67,13 +67,36 @@ def _run(
     effective_tags.update(policy.include_tags)
     effective_services = set(services or [])
     effective_services.update(policy.services)
-    tests = TestDiscovery().discover(
-        repo_root=repo_root,
-        gate=gate,
-        services=effective_services or None,
-        tags=effective_tags or None,
-        branch=branch,
-    )
+    try:
+        tests = TestDiscovery().discover(
+            repo_root=repo_root,
+            gate=gate,
+            services=effective_services or None,
+            tags=effective_tags or None,
+            branch=branch,
+        )
+    except ValueError as exc:
+        results_dir.mkdir(parents=True, exist_ok=True)
+        error_summary = {
+            "gate": gate,
+            "branch": branch,
+            "status": "error",
+            "reason": str(exc),
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "errored": 1,
+            "pass_rate": 0.0,
+        }
+        (results_dir / "summary.json").write_text(json.dumps(error_summary, indent=2), encoding="utf-8")
+        (results_dir / "results.json").write_text("[]", encoding="utf-8")
+        (results_dir / "junit.xml").write_text(
+            "<?xml version='1.0' encoding='utf-8'?>\n"
+            "<testsuite name=\"enterprise-regression\" tests=\"0\" failures=\"0\" errors=\"1\" />",
+            encoding="utf-8",
+        )
+        console.print(error_summary)
+        raise typer.Exit(code=2) from exc
     excluded = set(exclude_tags or []) | set(policy.exclude_tags)
     if excluded:
         tests = [test for test in tests if not excluded.intersection(test.tags)]

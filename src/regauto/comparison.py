@@ -47,9 +47,13 @@ class JsonComparator:
                 differences.append(Difference(path, expected, actual, "type mismatch"))
                 return
             for key in expected.keys() - actual.keys():
-                differences.append(Difference(f"{path}.{key}", expected[key], None, "missing key"))
+                child_path = f"{path}.{key}"
+                if child_path not in ignore_paths:
+                    differences.append(Difference(child_path, expected[key], None, "missing key"))
             for key in actual.keys() - expected.keys():
-                differences.append(Difference(f"{path}.{key}", None, actual[key], "unexpected key"))
+                child_path = f"{path}.{key}"
+                if child_path not in ignore_paths:
+                    differences.append(Difference(child_path, None, actual[key], "unexpected key"))
             for key in expected.keys() & actual.keys():
                 self._compare_value(f"{path}.{key}", expected[key], actual[key], ignore_paths, differences)
             return

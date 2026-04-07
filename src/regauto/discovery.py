@@ -56,8 +56,15 @@ class TestDiscovery:
         input_path = test_dir / "input.json"
         expected_path = test_dir / "expected_output.json"
         if not input_path.exists() or not expected_path.exists():
-            LOGGER.warning("invalid_test_folder", path=str(test_dir))
-            return None
+            missing = [
+                str(path.name)
+                for path in (input_path, expected_path)
+                if not path.exists()
+            ]
+            raise ValueError(
+                f"Invalid regression test folder {test_dir}: missing required asset(s): "
+                f"{', '.join(missing)}"
+            )
         metadata_path = test_dir / "metadata.yaml"
         metadata = TestMetadata.model_validate(load_yaml(metadata_path))
         service_type = metadata.service_type if metadata.service_type != "echo" else metadata.executor

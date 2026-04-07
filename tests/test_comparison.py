@@ -6,3 +6,13 @@ def test_json_comparator_detects_value_difference() -> None:
 
     assert not result.passed
     assert result.differences[0].path == "$.id"
+
+
+def test_json_comparator_ignores_unexpected_path() -> None:
+    result = JsonComparator().compare(
+        {"status_code": 200},
+        {"status_code": 200, "headers": {"date": "dynamic"}},
+        ignore_paths={"$.headers"},
+    )
+
+    assert result.passed
