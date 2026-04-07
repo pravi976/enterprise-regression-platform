@@ -63,6 +63,79 @@ Gates can be enabled or disabled per repository in `regression/config/regression
 `gate_policies`, and per branch in `regression/config/branches.yaml` using `disabled_gates` or
 `gate_overrides`. A disabled gate writes a skipped `summary.json` and exits with code `0`.
 
+## Add a new application repository
+
+To onboard another repository, add a `regression/` folder to that application repo. The central
+framework does not need code changes.
+
+```text
+repo-root/
+  regression/
+    config/
+      regression.yaml
+      branches.yaml
+    executors/
+      customer_service.py
+    services/
+      customer-service/
+        gate1/
+          TC001_customer_lookup/
+            input.json
+            expected_output.json
+            metadata.yaml
+```
+
+Minimum `regression/config/regression.yaml`:
+
+```yaml
+repository: your-application-repo
+owner: your-team
+default_branch: main
+services_root: regression/services
+build_tool: none
+gate_policies:
+  gate1:
+    enabled: true
+  gate2:
+    enabled: true
+impact_map:
+  src/customer/**:
+    - customer-service
+```
+
+Minimum `regression/config/branches.yaml`:
+
+```yaml
+default_branch: main
+policies:
+  main:
+    environment: DEV
+    gates: [gate1]
+    include_tags: [main]
+  release:
+    environment: RELEASE
+    gates: [gate1, gate2]
+    include_tags: [release]
+```
+
+Fastest way to generate a service-owned Python test skeleton:
+
+```powershell
+regauto scaffold-python-test `
+  --repo-root C:\path\to\your-application-repo `
+  --service customer-service `
+  --test-id TC001_customer_lookup `
+  --team customer-team `
+  --gate gate1 `
+  --branch main `
+  --branch release `
+  --tag critical
+```
+
+Then copy one of the GitHub Actions examples from `examples/github-actions/` into the new repo under
+`.github/workflows/`, update the framework URL to
+`https://github.com/pravi976/enterprise-regression-platform.git`, and run the workflow.
+
 ## Standard VM deployment
 
 Deploy it on standard Linux/Windows servers or CI agents using a Python virtual environment:
