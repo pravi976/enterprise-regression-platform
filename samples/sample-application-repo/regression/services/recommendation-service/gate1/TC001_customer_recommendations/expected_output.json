@@ -1,0 +1,7 @@
+{
+  "body": {
+    "customerId": "CUST-1001",
+    "recommendationCount": 2,
+    "source": "team-python-executor"
+  }
+}

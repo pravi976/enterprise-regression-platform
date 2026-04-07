@@ -115,6 +115,18 @@ class JmsExecutorConfig(BaseModel):
     response_fixture: str | None = None
 
 
+class PythonExecutorConfig(BaseModel):
+    """Team-owned Python executor configuration.
+
+    The script path is resolved relative to the application repository root.
+    If omitted, the framework searches common service-named locations such as
+    regression/executors/<service>.py and regression/services/<service>/<service>.py.
+    """
+
+    script: str | None = None
+    function: str = "execute"
+
+
 class TestMetadata(BaseModel):
     """Per-test metadata loaded from metadata.yaml."""
 
@@ -124,13 +136,14 @@ class TestMetadata(BaseModel):
     team: str = "unknown"
     microservice: str | None = None
     gate: str | None = None
-    service_type: Literal["echo", "rest", "jms"] = "echo"
+    service_type: Literal["echo", "rest", "jms", "python"] = "echo"
     tags: list[str] = Field(default_factory=list)
     branches: list[str] = Field(default_factory=list)
-    executor: Literal["echo", "rest", "jms", "http"] = "echo"
+    executor: Literal["echo", "rest", "jms", "http", "python"] = "echo"
     rest: RestExecutorConfig | None = None
     http: RestExecutorConfig | None = None
     jms: JmsExecutorConfig | None = None
+    python: PythonExecutorConfig | None = None
     severity: Literal["low", "medium", "high", "critical"] = "medium"
     timeout_seconds: float = 30.0
     ignore_json_paths: list[str] = Field(default_factory=list)

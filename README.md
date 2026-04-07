@@ -19,6 +19,32 @@ The sample tests use the built-in `echo` executor and a file-backed JMS provider
 services, set `service_type: rest` and provide endpoint details. For JMS, set `service_type: jms`
 and register an enterprise broker provider.
 
+Teams can also add service-owned Python executors without changing the core framework. Set
+`service_type: python` in `metadata.yaml`, then add a service-named file such as
+`regression/executors/customer_service.py` or
+`regression/services/customer-service/customer_service.py`. The file must expose
+`execute(input_payload, context)` and return the actual JSON-compatible result. The framework still
+loads `input.json`, runs the Python executor, compares the returned actual result against
+`expected_output.json`, and fails the gate with field-level differences when values are missing or
+different.
+
+```yaml
+service_type: python
+python:
+  script: regression/executors/customer_service.py
+  function: execute
+```
+
+```python
+def execute(input_payload, context):
+    return {
+        "body": {
+            "customerId": input_payload["customerId"],
+            "status": "ACTIVE",
+        }
+    }
+```
+
 Gates can be enabled or disabled per repository in `regression/config/regression.yaml` using
 `gate_policies`, and per branch in `regression/config/branches.yaml` using `disabled_gates` or
 `gate_overrides`. A disabled gate writes a skipped `summary.json` and exits with code `0`.

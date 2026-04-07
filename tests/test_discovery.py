@@ -14,6 +14,7 @@ def test_discovers_gate1_sample_tests() -> None:
         "customer-service",
         "payment-service",
         "notification-service",
+        "recommendation-service",
     }
     assert all(test.gate == "gate1" for test in tests)
 

@@ -1,0 +1,11 @@
+id: RECOMMENDATION_PY_TC001
+name: Customer recommendation Python executor regression
+team: recommendation-team
+microservice: recommendation-service
+service_type: python
+tags: [gate1, smoke, critical, recommendation-service, python, main, develop, test, release]
+branches: [main, develop, test, release]
+severity: medium
+python:
+  script: regression/executors/recommendation_service.py
+  function: execute

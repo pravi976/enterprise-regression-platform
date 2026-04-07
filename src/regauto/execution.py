@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import importlib.util
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -119,6 +120,58 @@ class JmsExecutor(TestExecutor):
         raise RuntimeError(f"JMS execution failed after {config.retry_count} attempt(s): {last_error}")
 
 
+class PythonExecutor(TestExecutor):
+    """Loads a team-owned Python file and uses its return value as actual output."""
+
+    def execute(self, test_case: TestCase, input_payload: Any) -> Any:
+        script_path, function_name = self._resolve_script(test_case)
+        module_name = f"regauto_team_executor_{abs(hash(script_path))}"
+        spec = importlib.util.spec_from_file_location(module_name, script_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Unable to load Python executor: {script_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        execute_fn = getattr(module, function_name, None)
+        if not callable(execute_fn):
+            raise ValueError(f"Python executor {script_path} must define callable {function_name}(input_payload, context)")
+        context = {
+            "test_id": test_case.id,
+            "repo_name": test_case.repo_name,
+            "service": test_case.service,
+            "gate": test_case.gate,
+            "test_path": str(test_case.path),
+            "metadata_path": str(test_case.metadata_path or test_case.path / "metadata.yaml"),
+        }
+        return execute_fn(input_payload, context)
+
+    def _resolve_script(self, test_case: TestCase) -> tuple[Path, str]:
+        config = test_case.metadata.python
+        function_name = config.function if config else "execute"
+        repo_root = test_case.path.resolve().parents[4]
+        regression_root = repo_root / "regression"
+        service_dir = test_case.path.resolve().parents[1]
+        candidates: list[Path] = []
+        if config and config.script:
+            candidates.append((repo_root / config.script).resolve())
+        service_file_name = f"{test_case.service.replace('-', '_')}.py"
+        candidates.extend(
+            [
+                (regression_root / "executors" / service_file_name).resolve(),
+                (regression_root / "executors" / f"{test_case.service}_executor.py").resolve(),
+                (service_dir / service_file_name).resolve(),
+                (service_dir / f"{test_case.service}_executor.py").resolve(),
+            ]
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(regression_root.resolve()):
+                    raise ValueError(f"Python executor must be under regression/: {resolved}")
+                return resolved, function_name
+        searched = ", ".join(str(path) for path in candidates)
+        raise ValueError(f"No Python executor found for {test_case.id}. Searched: {searched}")
+
+
 class ExecutorRegistry:
     """Registry for built-in and future executor plugins."""
 
@@ -128,6 +181,7 @@ class ExecutorRegistry:
             "http": RestExecutor(),
             "rest": RestExecutor(),
             "jms": JmsExecutor(),
+            "python": PythonExecutor(),
         }
 
     def get(self, name: str) -> TestExecutor:
@@ -156,7 +210,7 @@ class ExecutionEngine:
             input_payload = self._load_json(test_case.input_path)
             expected_payload = self._load_json(test_case.expected_output_path)
             executor_name = test_case.metadata.executor
-            if test_case.metadata.service_type in {"rest", "jms"}:
+            if test_case.metadata.service_type in {"rest", "jms", "python"}:
                 executor_name = test_case.metadata.service_type
             executor = self.registry.get(executor_name)
             actual_payload = executor.execute(test_case, input_payload)
