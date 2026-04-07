@@ -1,0 +1,38 @@
+name: Gate 2 Scheduled Regression
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 18 * * 1-5"
+
+jobs:
+  gate2:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: [develop, test, release]
+    env:
+      REGAUTO_DATABASE_URL: ${{ secrets.REGAUTO_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install regression framework
+        run: pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
+      - name: Run Gate 2 and publish dashboard metadata
+        run: |
+          regauto run-gate2 \
+            --repo-root . \
+            --results-dir regression-results/gate2 \
+            --branch ${{ matrix.branch }} \
+            --trigger schedule \
+            --publish
+      - name: Upload regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate2-regression-results
+          path: regression-results/gate2

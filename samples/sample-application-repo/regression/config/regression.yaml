@@ -1,0 +1,43 @@
+repository: sample-application-repo
+owner: platform-quality
+default_branch: main
+remote_url: https://github.com/YOUR_ORG/sample-application-repo.git
+services_root: regression/services
+build_tool: none
+commands:
+  pre_build: []
+  build: []
+  post_build: []
+  pre_test: []
+  post_test: []
+gates:
+  gate1:
+    - gate1
+    - critical
+  gate2:
+    - gate2
+    - full
+gate_policies:
+  gate1:
+    enabled: true
+    reason: Fast critical gate is active
+  gate2:
+    enabled: true
+    reason: Broader regression gate is active
+service_owners:
+  customer-service: customer-platform-team
+  payment-service: payments-team
+  notification-service: messaging-team
+impact_map:
+  src/customer/**:
+    - customer-service
+  src/payment/**:
+    - payment-service
+  shared/contracts/customer/**:
+    - customer-service
+  shared/contracts/payment/**:
+    - payment-service
+  src/notification/**:
+    - notification-service
+  shared/messaging/**:
+    - notification-service

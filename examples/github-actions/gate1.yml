@@ -1,0 +1,32 @@
+name: Gate 1 Regression
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  gate1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install regression framework
+        run: pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
+      - name: Run Gate 1
+        run: |
+          regauto run-gate1 \
+            --repo-root . \
+            --results-dir regression-results/gate1 \
+            --trigger pr \
+            --commit-sha ${{ github.sha }} \
+            --branch ${{ github.head_ref || github.ref_name }}
+      - name: Publish regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1-regression-results
+          path: regression-results/gate1

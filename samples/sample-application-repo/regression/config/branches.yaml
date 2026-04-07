@@ -1,0 +1,42 @@
+default_branch: main
+policies:
+  develop:
+    environment: DEV
+    gates: [gate1]
+    include_tags: [develop]
+    exclude_tags: []
+    services: []
+    clean_workspace: false
+    disabled_gates: [gate2]
+    gate_overrides:
+      gate1:
+        enabled: true
+        reason: Develop branch runs fast validation only
+    commands:
+      build: []
+  test:
+    environment: QA
+    gates: [gate1, gate2]
+    include_tags: [test]
+    exclude_tags: []
+    services: []
+    clean_workspace: false
+    disabled_gates: []
+    commands:
+      build: []
+  release:
+    environment: PREPROD
+    gates: [gate1, gate2]
+    include_tags: [release]
+    exclude_tags: []
+    services: []
+    clean_workspace: true
+    disabled_gates: []
+    gate_overrides:
+      gate1:
+        enabled: true
+      gate2:
+        enabled: true
+        reason: Release branch requires full certification
+    commands:
+      build: []

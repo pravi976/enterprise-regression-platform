@@ -1,0 +1,8 @@
+{
+  "status_code": 201,
+  "body": {
+    "customerId": "C001",
+    "name": "Asha Rao",
+    "status": "ACTIVE"
+  }
+}

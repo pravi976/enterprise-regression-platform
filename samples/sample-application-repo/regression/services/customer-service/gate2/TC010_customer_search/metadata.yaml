@@ -1,0 +1,7 @@
+id: TC010_customer_search
+name: Search customers by name
+team: customer-platform-team
+microservice: customer-service
+tags: [gate2, full, customer-service]
+executor: echo
+severity: medium

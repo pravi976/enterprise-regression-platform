@@ -1,0 +1,6 @@
+{
+  "notificationId": "N001",
+  "channel": "EMAIL",
+  "recipient": "customer@example.com",
+  "template": "WELCOME"
+}

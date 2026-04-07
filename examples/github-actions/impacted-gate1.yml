@@ -1,0 +1,29 @@
+name: Impacted Gate 1 Regression
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  impacted-gate1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install regression framework
+        run: pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
+      - name: Resolve changed files
+        run: git diff --name-only origin/${{ github.base_ref }}...HEAD > changed-files.txt
+      - name: Resolve impacted services
+        run: |
+          while read file; do args="$args --changed-file $file"; done < changed-files.txt
+          regauto impacted-tests --repo-root . $args > impacted-services.txt
+          cat impacted-services.txt
+      - name: Run impacted Gate 1 services
+        run: |
+          while read service; do service_args="$service_args --service $service"; done < impacted-services.txt
+          regauto run-gate1 --repo-root . --results-dir regression-results/gate1 $service_args --trigger pr

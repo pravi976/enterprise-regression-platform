@@ -1,0 +1,9 @@
+id: TC001_validate_payment
+name: Validate payment authorization
+team: payments-team
+microservice: payment-service
+service_type: echo
+tags: [gate1, smoke, critical, payment-service, develop, test, release]
+branches: [develop, test, release]
+executor: echo
+severity: critical

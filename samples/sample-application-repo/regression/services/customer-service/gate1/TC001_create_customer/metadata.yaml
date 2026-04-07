@@ -1,0 +1,9 @@
+id: TC001_create_customer
+name: Create customer critical path
+team: customer-platform-team
+microservice: customer-service
+service_type: echo
+tags: [gate1, smoke, critical, customer-service, develop, test, release]
+branches: [develop, test, release]
+executor: echo
+severity: critical

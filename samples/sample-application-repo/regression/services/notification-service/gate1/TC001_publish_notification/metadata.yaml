@@ -1,0 +1,16 @@
+id: TC001_publish_notification
+name: Publish notification request reply
+team: messaging-team
+microservice: notification-service
+service_type: jms
+tags: [gate1, smoke, critical, notification-service, jms, develop, test, release]
+branches: [develop, test, release]
+executor: jms
+severity: critical
+jms:
+  provider: file
+  request_queue: NOTIFICATION.REQUEST
+  response_queue: NOTIFICATION.RESPONSE
+  correlation_id_strategy: uuid
+  timeout_seconds: 5
+  retry_count: 1

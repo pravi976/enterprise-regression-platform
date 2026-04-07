@@ -1,0 +1,21 @@
+id: TC001_create_customer_rest
+name: Create customer through REST endpoint
+team: customer-platform-team
+microservice: customer-service
+service_type: rest
+tags: [gate1, smoke, critical, customer-service, rest, develop, test, release]
+branches: [develop, test, release]
+executor: rest
+severity: critical
+ignore_json_paths:
+  - $.headers
+rest:
+  method: POST
+  base_url: https://customer-dev.example.internal
+  endpoint: /api/customers
+  headers:
+    Content-Type: application/json
+    X-Regression-Suite: enterprise
+  auth_token_env: CUSTOMER_API_TOKEN
+  expected_status: 201
+  timeout_seconds: 10
