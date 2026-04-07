@@ -71,6 +71,28 @@ def _run(
     excluded = set(exclude_tags or []) | set(policy.exclude_tags)
     if excluded:
         tests = [test for test in tests if not excluded.intersection(test.tags)]
+    if not tests:
+        results_dir.mkdir(parents=True, exist_ok=True)
+        empty_summary = {
+            "gate": gate,
+            "branch": branch,
+            "status": "error",
+            "reason": "No regression tests were discovered for the enabled gate and branch",
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "errored": 1,
+            "pass_rate": 0.0,
+        }
+        (results_dir / "summary.json").write_text(json.dumps(empty_summary, indent=2), encoding="utf-8")
+        (results_dir / "results.json").write_text("[]", encoding="utf-8")
+        (results_dir / "junit.xml").write_text(
+            "<?xml version='1.0' encoding='utf-8'?>\n"
+            "<testsuite name=\"enterprise-regression\" tests=\"0\" failures=\"0\" errors=\"1\" />",
+            encoding="utf-8",
+        )
+        console.print(empty_summary)
+        raise typer.Exit(code=2)
     results = ExecutionEngine().run(tests)
     written = ReportWriter().write(results, results_dir)
     summary = summarize(results)
