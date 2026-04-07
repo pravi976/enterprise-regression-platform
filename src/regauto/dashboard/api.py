@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from regauto.config import Settings
+from regauto.config import Settings, load_repository_config, resolve_gate_decision
 from regauto.db import create_schema, get_session
+from regauto.discovery import TestDiscovery
+from regauto.execution import ExecutionEngine
 from regauto.models import ExecutionRun, Repository, TestResult
+from regauto.persistence import persist_run, upsert_repository
+from regauto.reporting import ReportWriter, should_fail_gate, summarize
 
 settings = Settings()
 app = FastAPI(title="Enterprise Regression Dashboard API", version="0.1.0")
+
+
+class RunGateRequest(BaseModel):
+    """Request to run a gate from the dashboard UI."""
+
+    repo_root: Path = Field(description="Application repository root on this server or runner")
+    branch: str | None = Field(default="main", description="Branch policy to apply")
+    results_dir: Path | None = Field(default=None, description="Optional output directory")
+    trigger: str = "ui"
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -29,6 +47,12 @@ def startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ui", response_class=HTMLResponse)
+def dashboard_ui() -> str:
+    """Minimal management UI for running gates and viewing latest results."""
+    return _DASHBOARD_HTML
 
 
 @app.get("/repositories", dependencies=[Depends(require_api_key)])
@@ -54,6 +78,59 @@ def latest_executions(limit: int = 20, session: Session = Depends(get_session)) 
         }
         for row in rows
     ]
+
+
+@app.get("/executions/{run_id}/results", dependencies=[Depends(require_api_key)])
+def execution_results(run_id: int, session: Session = Depends(get_session)) -> dict[str, object]:
+    run = session.get(ExecutionRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found")
+    results = (
+        session.query(TestResult)
+        .filter(TestResult.run_id == run_id)
+        .order_by(TestResult.service, TestResult.test_id)
+        .all()
+    )
+    return {
+        "run": {
+            "id": run.id,
+            "repository": run.repository,
+            "gate": run.gate,
+            "trigger": run.trigger,
+            "branch": run.branch,
+            "commit_sha": run.commit_sha,
+            "status": run.status,
+            "pass_rate": run.pass_rate,
+            "total": run.total,
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+        },
+        "results": [
+            {
+                "test_id": result.test_id,
+                "service": result.service,
+                "team": result.team,
+                "gate": result.gate,
+                "status": result.status,
+                "service_type": result.service_type,
+                "failure_type": result.failure_type,
+                "duration_ms": result.duration_ms,
+                "error": result.error,
+                "differences": json.loads(result.differences_json or "[]"),
+            }
+            for result in results
+        ],
+    }
+
+
+@app.post("/run/gate1", dependencies=[Depends(require_api_key)])
+def run_gate1(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("gate1", request, session)
+
+
+@app.post("/run/gate2", dependencies=[Depends(require_api_key)])
+def run_gate2(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("gate2", request, session)
 
 
 @app.get("/metrics/summary", dependencies=[Depends(require_api_key)])
@@ -104,3 +181,155 @@ def management_summary(session: Session = Depends(get_session)) -> dict[str, obj
             "total": latest.total,
         },
     }
+
+
+def _run_gate(gate: str, request: RunGateRequest, session: Session) -> dict[str, object]:
+    repo_root = request.repo_root.resolve()
+    if not repo_root.exists():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Repository root not found: {repo_root}")
+    gate_decision = resolve_gate_decision(repo_root, gate, request.branch)
+    if not gate_decision.enabled:
+        return {
+            "status": "skipped",
+            "gate": gate,
+            "branch": request.branch,
+            "reason": gate_decision.reason or "Gate disabled by policy",
+        }
+    tests = TestDiscovery().discover(repo_root=repo_root, gate=gate, branch=request.branch)
+    if not tests:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No tests discovered for {gate} on branch {request.branch}",
+        )
+    results = ExecutionEngine().run(tests)
+    repo_config = load_repository_config(repo_root)
+    output_dir = request.results_dir or repo_root / "regression-results" / gate
+    ReportWriter().write(results, output_dir)
+    upsert_repository(session, repo_config.repository, repo_config.remote_url, repo_config.owner)
+    run = persist_run(session, repo_config.repository, gate, request.trigger, results, branch=request.branch)
+    summary = summarize(results)
+    return {
+        "run_id": run.id,
+        "status": "failed" if should_fail_gate(results) else "passed",
+        "summary": summary,
+        "results_dir": str(output_dir),
+    }
+
+
+_DASHBOARD_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Enterprise Regression Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f7f8fb; color: #172033; }
+    h1 { margin-bottom: 4px; }
+    .panel { background: white; border: 1px solid #dde3ee; border-radius: 10px; padding: 16px; margin: 16px 0; box-shadow: 0 1px 2px #0001; }
+    label { display: block; font-weight: 600; margin-top: 10px; }
+    input { width: 100%; max-width: 820px; padding: 8px; border: 1px solid #b8c2d6; border-radius: 6px; }
+    button { margin: 12px 8px 0 0; padding: 9px 14px; border: 0; border-radius: 6px; background: #155eef; color: white; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #52637a; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; background: white; }
+    th, td { border: 1px solid #dde3ee; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #edf2fb; }
+    .passed { color: #047857; font-weight: 700; }
+    .failed, .error { color: #b42318; font-weight: 700; }
+    .muted { color: #5d6b82; }
+    pre { white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Enterprise Regression Dashboard</h1>
+  <div class="muted">Run Gate 1/Gate 2 and inspect latest pass/fail summaries with field-level diffs.</div>
+
+  <section class="panel">
+    <label>Repository root on this runner/server</label>
+    <input id="repoRoot" placeholder="C:\\Users\\pravi\\spring-services\\sample-inventory" />
+    <label>Branch policy</label>
+    <input id="branch" value="main" />
+    <label>API key, only if REGAUTO_API_KEY is configured</label>
+    <input id="apiKey" type="password" placeholder="optional" />
+    <button onclick="runGate('gate1')">Run Gate 1</button>
+    <button onclick="runGate('gate2')">Run Gate 2</button>
+    <button class="secondary" onclick="loadLatest()">View Latest Results</button>
+  </section>
+
+  <section class="panel">
+    <h2>Run Summary</h2>
+    <div id="summary">No run loaded yet.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Test Results</h2>
+    <div id="results"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Field-Level Differences</h2>
+    <div id="diffs"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Raw Response</h2>
+    <pre id="raw"></pre>
+  </section>
+
+  <script>
+    function headers() {
+      const apiKey = document.getElementById("apiKey").value;
+      const value = {"Content-Type": "application/json"};
+      if (apiKey) value["x-api-key"] = apiKey;
+      return value;
+    }
+
+    async function runGate(gate) {
+      const payload = {
+        repo_root: document.getElementById("repoRoot").value,
+        branch: document.getElementById("branch").value || "main",
+        trigger: "ui"
+      };
+      setRaw(`Running ${gate}...`);
+      const response = await fetch(`/run/${gate}`, {method: "POST", headers: headers(), body: JSON.stringify(payload)});
+      const data = await response.json();
+      setRaw(JSON.stringify(data, null, 2));
+      if (!response.ok) return;
+      if (data.run_id) await loadRun(data.run_id);
+      else renderSummary(data);
+    }
+
+    async function loadLatest() {
+      const response = await fetch("/executions/latest?limit=1", {headers: headers()});
+      const data = await response.json();
+      setRaw(JSON.stringify(data, null, 2));
+      if (Array.isArray(data) && data.length) await loadRun(data[0].id);
+      if (Array.isArray(data) && data.length === 0) document.getElementById("summary").innerText = "No runs found.";
+    }
+
+    async function loadRun(id) {
+      const response = await fetch(`/executions/${id}/results`, {headers: headers()});
+      const data = await response.json();
+      setRaw(JSON.stringify(data, null, 2));
+      renderRun(data);
+    }
+
+    function renderRun(data) {
+      renderSummary(data.run);
+      const rows = data.results.map(r => `<tr><td class="${r.status}">${r.status.toUpperCase()}</td><td>${r.gate}</td><td>${r.service}</td><td>${r.service_type || ""}</td><td>${r.test_id}</td><td>${r.duration_ms}</td><td>${r.error || ""}</td></tr>`).join("");
+      document.getElementById("results").innerHTML = `<table><tr><th>Status</th><th>Gate</th><th>Service</th><th>Type</th><th>Test</th><th>Duration ms</th><th>Error</th></tr>${rows}</table>`;
+      const diffRows = [];
+      data.results.forEach(r => (r.differences || []).forEach(d => diffRows.push(`<tr><td>${r.test_id}</td><td>${d.path}</td><td><code>${escapeHtml(JSON.stringify(d.expected))}</code></td><td><code>${escapeHtml(JSON.stringify(d.actual))}</code></td><td>${d.message}</td></tr>`)));
+      document.getElementById("diffs").innerHTML = diffRows.length ? `<table><tr><th>Test</th><th>JSON Path</th><th>Expected</th><th>Actual</th><th>Message</th></tr>${diffRows.join("")}</table>` : "No field-level differences.";
+    }
+
+    function renderSummary(summary) {
+      document.getElementById("summary").innerHTML = `<table><tr><th>Status</th><th>Repository</th><th>Gate</th><th>Branch</th><th>Total</th><th>Pass Rate</th></tr><tr><td class="${summary.status || ""}">${summary.status || ""}</td><td>${summary.repository || ""}</td><td>${summary.gate || ""}</td><td>${summary.branch || ""}</td><td>${summary.total ?? ""}</td><td>${summary.pass_rate ?? ""}</td></tr></table>`;
+    }
+
+    function setRaw(value) { document.getElementById("raw").innerText = value; }
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch])); }
+  </script>
+</body>
+</html>
+"""
