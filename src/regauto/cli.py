@@ -25,6 +25,7 @@ from regauto.reporting import (
     should_fail_gate,
     summarize,
 )
+from regauto.scaffold import scaffold_python_test
 from regauto.source_control import CheckoutRequest, GitRepositoryManager
 
 app = typer.Typer(help="Enterprise regression automation CLI")
@@ -268,6 +269,37 @@ def impacted_tests(
     services = impacted_services(repo_root, changed_file)
     for service in sorted(services):
         console.print(service)
+
+
+@app.command("scaffold-python-test")
+def scaffold_python_test_command(
+    repo_root: Annotated[Path, typer.Option(help="Application repository root")],
+    service: Annotated[str, typer.Option(help="Microservice folder name, for example customer-service")],
+    test_id: Annotated[str, typer.Option(help="Regression test id, for example TC001_customer_lookup")],
+    team: Annotated[str, typer.Option(help="Owning team name")],
+    gate: Annotated[str, typer.Option(help="Gate folder to create")] = "gate1",
+    branch: Annotated[
+        list[str] | None,
+        typer.Option("--branch", help="Branch applicability; repeat for multiple branches"),
+    ] = None,
+    tag: Annotated[list[str] | None, typer.Option("--tag", help="Additional tag; repeat for multiple tags")] = None,
+    force: Annotated[bool, typer.Option(help="Overwrite existing generated files")] = False,
+) -> None:
+    """Generate a service-owned Python executor and test asset skeleton."""
+    result = scaffold_python_test(
+        repo_root=repo_root,
+        service=service,
+        gate=gate,
+        test_id=test_id,
+        team=team,
+        branches=branch or ["main", "develop", "test", "release"],
+        tags=tag,
+        force=force,
+    )
+    for path in result.created:
+        console.print(f"created: {path}")
+    for path in result.skipped:
+        console.print(f"skipped existing: {path}")
 
 
 @app.command("run-gate1")

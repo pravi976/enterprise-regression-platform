@@ -35,6 +35,20 @@ python:
   function: execute
 ```
 
+To generate this skeleton automatically:
+
+```powershell
+regauto scaffold-python-test `
+  --repo-root C:\path\to\application-repo `
+  --service customer-service `
+  --test-id TC001_customer_lookup `
+  --team customer-team `
+  --gate gate1 `
+  --branch main `
+  --branch develop `
+  --tag critical
+```
+
 ```python
 def execute(input_payload, context):
     return {
