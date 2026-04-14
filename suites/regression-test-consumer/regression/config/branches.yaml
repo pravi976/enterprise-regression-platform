@@ -1,0 +1,11 @@
+default_branch: develop
+policies:
+  develop:
+    environment: QA
+    gates: [level3]
+    include_tags: [develop]
+    disabled_gates: [level4, level5]
+  release:
+    environment: PREPROD
+    gates: [level3, level4, level5]
+    include_tags: [release]

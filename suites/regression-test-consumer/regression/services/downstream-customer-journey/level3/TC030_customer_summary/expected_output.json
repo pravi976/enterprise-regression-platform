@@ -1,0 +1,8 @@
+{
+  "customerId": "CUST-1001",
+  "customerName": "Asha Verma",
+  "tier": "GOLD",
+  "activeOrders": 3,
+  "lastOrderId": "ORD-9001",
+  "upstreamStatus": "ACTIVE"
+}

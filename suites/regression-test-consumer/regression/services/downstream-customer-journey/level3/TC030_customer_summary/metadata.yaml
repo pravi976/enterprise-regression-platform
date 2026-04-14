@@ -1,0 +1,11 @@
+id: DOWNSTREAM_TC030_CUSTOMER_SUMMARY
+name: Downstream customer summary integration regression
+team: downstream-team
+microservice: downstream-customer-journey
+service_type: python
+tags: [level3, integration, downstream-customer-journey, develop, release]
+branches: [main, develop, release]
+severity: high
+python:
+  script: regression/executors/downstream_customer_journey.py
+  function: execute

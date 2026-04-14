@@ -24,6 +24,7 @@ class TestDiscovery:
     def discover(
         self,
         repo_root: Path,
+        assets_root: Path | None = None,
         gate: str | None = None,
         services: set[str] | None = None,
         tags: set[str] | None = None,
@@ -32,8 +33,9 @@ class TestDiscovery:
         repo_root = repo_root.resolve()
         requested_gate = canonical_gate_name(gate)
         accepted_gate_names = gate_aliases(gate)
-        repo_config = load_repository_config(repo_root)
-        services_root = repo_root / repo_config.services_root
+        repo_config = load_repository_config(repo_root, assets_root)
+        suite_root = (assets_root or repo_root).resolve()
+        services_root = suite_root / repo_config.services_root
         if not services_root.exists():
             LOGGER.warning("services_root_missing", path=str(services_root))
             return []

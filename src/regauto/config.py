@@ -222,28 +222,32 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
-def load_repository_config(repo_root: Path) -> RepositoryConfig:
-    """Load regression/config/regression.yaml from an application repository."""
+def load_repository_config(repo_root: Path, assets_root: Path | None = None) -> RepositoryConfig:
+    """Load regression/config/regression.yaml from an application repository or an external assets root."""
     config_path = repo_root / "regression" / "config" / "regression.yaml"
     data = load_yaml(config_path)
+    if not data and assets_root is not None:
+        data = load_yaml(assets_root / "regression" / "config" / "regression.yaml")
     if not data:
         data = {"repository": repo_root.name}
     return RepositoryConfig.model_validate(data)
 
 
-def load_branch_config(repo_root: Path) -> BranchConfig:
-    """Load optional branch policies from regression/config/branches.yaml."""
+def load_branch_config(repo_root: Path, assets_root: Path | None = None) -> BranchConfig:
+    """Load optional branch policies from regression/config/branches.yaml from repo or external assets root."""
     config_path = repo_root / "regression" / "config" / "branches.yaml"
     data = load_yaml(config_path)
+    if not data and assets_root is not None:
+        data = load_yaml(assets_root / "regression" / "config" / "branches.yaml")
     if not data:
-        repository_config = load_repository_config(repo_root)
+        repository_config = load_repository_config(repo_root, assets_root)
         data = {"default_branch": repository_config.default_branch, "policies": {}}
     return BranchConfig.model_validate(data)
 
 
-def resolve_branch_policy(repo_root: Path, branch: str | None) -> BranchPolicy:
+def resolve_branch_policy(repo_root: Path, branch: str | None, assets_root: Path | None = None) -> BranchPolicy:
     """Resolve an exact branch policy or return a sensible default policy."""
-    branch_config = load_branch_config(repo_root)
+    branch_config = load_branch_config(repo_root, assets_root)
     selected_branch = branch or branch_config.default_branch
     if selected_branch in branch_config.policies:
         policy = branch_config.policies[selected_branch]
@@ -257,12 +261,17 @@ def resolve_branch_policy(repo_root: Path, branch: str | None) -> BranchPolicy:
     return policy
 
 
-def resolve_gate_decision(repo_root: Path, gate: str | None, branch: str | None = None) -> GateDecision:
+def resolve_gate_decision(
+    repo_root: Path,
+    gate: str | None,
+    branch: str | None = None,
+    assets_root: Path | None = None,
+) -> GateDecision:
     """Resolve whether a gate is enabled at repository and branch scope."""
     normalized_gate = canonical_gate_name(gate)
     if not normalized_gate:
         return GateDecision(enabled=True)
-    repo_config = load_repository_config(repo_root)
+    repo_config = load_repository_config(repo_root, assets_root)
     repo_gate_policies = {
         canonical_gate_name(name) or name: policy for name, policy in repo_config.gate_policies.items()
     }
@@ -272,7 +281,7 @@ def resolve_gate_decision(repo_root: Path, gate: str | None, branch: str | None 
             enabled=False,
             reason=repo_gate_policy.reason or f"{normalized_gate} disabled by repository policy",
         )
-    branch_policy = resolve_branch_policy(repo_root, branch)
+    branch_policy = resolve_branch_policy(repo_root, branch, assets_root)
     if normalized_gate in branch_policy.disabled_gates:
         return GateDecision(enabled=False, reason=f"{normalized_gate} disabled for branch {branch}")
     branch_gate_policy = branch_policy.gate_overrides.get(normalized_gate)

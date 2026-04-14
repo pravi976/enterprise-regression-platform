@@ -38,6 +38,7 @@ def _run(
     results_dir: Path,
     tags: list[str] | None,
     services: list[str] | None,
+    assets_root: Path | None,
     publish: bool,
     trigger: str,
     commit_sha: str | None,
@@ -46,7 +47,7 @@ def _run(
 ) -> None:
     configure_logging()
     gate = canonical_gate_name(gate)
-    gate_decision = resolve_gate_decision(repo_root, gate, branch)
+    gate_decision = resolve_gate_decision(repo_root, gate, branch, assets_root)
     if not gate_decision.enabled:
         reason = gate_decision.reason or "Gate disabled by policy"
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +65,7 @@ def _run(
         (results_dir / "summary.json").write_text(json.dumps(skipped_summary, indent=2), encoding="utf-8")
         console.print(skipped_summary)
         raise typer.Exit(code=0)
-    policy = resolve_branch_policy(repo_root, branch)
+    policy = resolve_branch_policy(repo_root, branch, assets_root)
     effective_tags = set(tags or [])
     effective_tags.update(policy.include_tags)
     effective_services = set(services or [])
@@ -72,6 +73,7 @@ def _run(
     try:
         tests = TestDiscovery().discover(
             repo_root=repo_root,
+            assets_root=assets_root,
             gate=gate,
             services=effective_services or None,
             tags=effective_tags or None,
@@ -147,6 +149,7 @@ def _checkout_build_and_run(
     branch: str,
     gate: str,
     results_dir: Path,
+    assets_root: Path | None,
     publish: bool,
     trigger: str,
     clean: bool,
@@ -162,7 +165,7 @@ def _checkout_build_and_run(
             clean=clean,
         )
     )
-    gate_decision = resolve_gate_decision(checkout.repo_root, gate, branch)
+    gate_decision = resolve_gate_decision(checkout.repo_root, gate, branch, assets_root)
     if not gate_decision.enabled:
         reason = gate_decision.reason or "Gate disabled by policy"
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -177,8 +180,8 @@ def _checkout_build_and_run(
         (results_dir / "summary.json").write_text(json.dumps(skipped_summary, indent=2), encoding="utf-8")
         console.print(f"Skipping {gate} for {branch}: {reason}")
         raise typer.Exit(code=0)
-    repo_config = load_repository_config(checkout.repo_root)
-    policy = resolve_branch_policy(checkout.repo_root, branch)
+    repo_config = load_repository_config(checkout.repo_root, assets_root)
+    policy = resolve_branch_policy(checkout.repo_root, branch, assets_root)
     BuildOrchestrator().run(checkout.repo_root, repo_config, policy)
     BuildOrchestrator().run_pre_test(checkout.repo_root, repo_config, policy)
     try:
@@ -188,6 +191,7 @@ def _checkout_build_and_run(
             results_dir,
             None,
             None,
+            assets_root,
             publish,
             trigger,
             checkout.commit_sha,
@@ -202,6 +206,7 @@ def _build_and_run_existing_repo(
     branch: str,
     gate: str,
     results_dir: Path,
+    assets_root: Path | None,
     publish: bool,
     trigger: str,
     commit_sha: str | None = None,
@@ -209,7 +214,7 @@ def _build_and_run_existing_repo(
     configure_logging()
     repo_root = repo_root.resolve()
     gate = canonical_gate_name(gate) or gate
-    gate_decision = resolve_gate_decision(repo_root, gate, branch)
+    gate_decision = resolve_gate_decision(repo_root, gate, branch, assets_root)
     if not gate_decision.enabled:
         reason = gate_decision.reason or "Gate disabled by policy"
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -224,13 +229,13 @@ def _build_and_run_existing_repo(
         (results_dir / "summary.json").write_text(json.dumps(skipped_summary, indent=2), encoding="utf-8")
         console.print(skipped_summary)
         raise typer.Exit(code=0)
-    repo_config = load_repository_config(repo_root)
-    policy = resolve_branch_policy(repo_root, branch)
+    repo_config = load_repository_config(repo_root, assets_root)
+    policy = resolve_branch_policy(repo_root, branch, assets_root)
     orchestrator = BuildOrchestrator()
     orchestrator.run(repo_root, repo_config, policy)
     orchestrator.run_pre_test(repo_root, repo_config, policy)
     try:
-        _run(repo_root, gate, results_dir, None, None, publish, trigger, commit_sha, branch)
+        _run(repo_root, gate, results_dir, None, None, assets_root, publish, trigger, commit_sha, branch)
     finally:
         orchestrator.run_post_test(repo_root, repo_config, policy)
 
@@ -312,6 +317,10 @@ def run_layer(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level1"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
@@ -321,7 +330,7 @@ def run_layer(
     normalized_gate = canonical_gate_name(gate)
     if normalized_gate not in VALID_LAYERS:
         raise typer.BadParameter(f"Unsupported regression layer '{gate}'. Expected one of: {', '.join(VALID_LAYERS)}")
-    _run(repo_root, normalized_gate, results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, normalized_gate, results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-level1")
@@ -330,13 +339,17 @@ def run_level1(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level1"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Run Level 1 unit regression tests."""
-    _run(repo_root, "level1", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "level1", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-level2")
@@ -345,13 +358,17 @@ def run_level2(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level2"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Run Level 2 component or API regression tests."""
-    _run(repo_root, "level2", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "level2", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-level3")
@@ -360,13 +377,17 @@ def run_level3(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level3"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Run Level 3 integration regression tests."""
-    _run(repo_root, "level3", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "level3", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-level4")
@@ -375,13 +396,17 @@ def run_level4(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level4"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Run Level 4 end-to-end regression tests."""
-    _run(repo_root, "level4", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "level4", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-level5")
@@ -390,13 +415,17 @@ def run_level5(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/level5"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Run Level 5 operational regression tests."""
-    _run(repo_root, "level5", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "level5", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-gate1")
@@ -405,13 +434,17 @@ def run_gate1(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/gate1"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Legacy alias for Level 1 regression tests."""
-    _run(repo_root, "gate1", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "gate1", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-gate2")
@@ -420,24 +453,32 @@ def run_gate2(
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/gate2"),
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     service: Annotated[list[str] | None, typer.Option("--service")] = None,
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
     branch: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Legacy alias for Level 2 regression tests."""
-    _run(repo_root, "gate2", results_dir, tag, service, publish, trigger, commit_sha, branch)
+    _run(repo_root, "gate2", results_dir, tag, service, assets_root, publish, trigger, commit_sha, branch)
 
 
 @app.command("run-full")
 def run_full(
     repo_root: Annotated[Path, typer.Option(help="Application repository root")],
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results/full"),
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
 ) -> None:
     """Run all discovered regression tests across every layer."""
-    _run(repo_root, None, results_dir, None, None, publish, trigger, None, None)
+    _run(repo_root, None, results_dir, None, None, assets_root, publish, trigger, None, None)
 
 
 @app.command("checkout-build-run")
@@ -448,6 +489,10 @@ def checkout_build_run(
     workspace_root: Annotated[Path, typer.Option(help="Local workspace root for cloned repositories")],
     directory_name: Annotated[str, typer.Option(help="Local directory name for the repository clone")],
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results"),
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     clean: Annotated[bool, typer.Option(help="Clean untracked files before build")] = False,
@@ -460,6 +505,7 @@ def checkout_build_run(
         branch=branch,
         gate=gate,
         results_dir=results_dir,
+        assets_root=assets_root,
         publish=publish,
         trigger=trigger,
         clean=clean,
@@ -472,12 +518,16 @@ def build_run(
     branch: Annotated[str, typer.Option(help="Logical branch policy to apply")],
     gate: Annotated[str, typer.Option(help="Regression layer to run, for example level1 to level5")],
     results_dir: Annotated[Path, typer.Option(help="Output directory")] = Path("results"),
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     publish: Annotated[bool, typer.Option(help="Publish to metadata DB")] = False,
     trigger: Annotated[str, typer.Option(help="schedule, pr, commit, manual")] = "manual",
     commit_sha: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     """Build an already checked-out repository and run a regression layer."""
-    _build_and_run_existing_repo(repo_root, branch, gate, results_dir, publish, trigger, commit_sha)
+    _build_and_run_existing_repo(repo_root, branch, gate, results_dir, assets_root, publish, trigger, commit_sha)
 
 
 @app.command("init-db")

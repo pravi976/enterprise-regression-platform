@@ -1,0 +1,9 @@
+{
+  "customerId": "CUST-1001",
+  "customerName": "Asha Verma",
+  "city": "Bengaluru",
+  "tier": "GOLD",
+  "activeOrders": 3,
+  "recommendedAction": "PRIORITY_REVIEW",
+  "journeyStatus": "READY"
+}

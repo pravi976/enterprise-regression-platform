@@ -1,0 +1,87 @@
+repository: regression-test-consumer
+owner: platform-regression
+default_branch: develop
+services_root: regression/services
+build_tool: gradle
+commands:
+  pre_build:
+    - 'chmod +x ./gradlew'
+  build:
+    - './gradlew --gradle-user-home .gradle-home clean test bootJar'
+  post_build: []
+  pre_test:
+    - |
+      set -e
+      PRODUCER_JAR_PATH="$(ls -1 ../regression-test-producer/build/libs/regression-test-producer-*.jar 2>/dev/null | head -n 1)"
+      if [ -z "$PRODUCER_JAR_PATH" ]; then
+        echo "Producer jar not found under ../regression-test-producer/build/libs" >&2
+        ls -la ../regression-test-producer/build/libs || true
+        exit 1
+      fi
+      java -jar "$PRODUCER_JAR_PATH" >/dev/null 2>&1 &
+      echo $! > .regauto-producer.pid
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8091/api/upstream/ops/status" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      if [ $i -ge 60 ]; then
+        echo "producer app did not become ready" >&2
+        exit 1
+      fi
+
+      CONSUMER_JAR_PATH="$(ls -1 build/libs/regression-test-consumer-*.jar 2>/dev/null | head -n 1)"
+      if [ -z "$CONSUMER_JAR_PATH" ]; then
+        echo "Consumer jar not found under build/libs" >&2
+        ls -la build/libs || true
+        exit 1
+      fi
+      java -jar "$CONSUMER_JAR_PATH" >/dev/null 2>&1 &
+      echo $! > .regauto-consumer.pid
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8092/api/downstream/ops/status" >/dev/null 2>&1; then
+          exit 0
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      echo "consumer app did not become ready" >&2
+      exit 1
+  post_test:
+    - |
+      set +e
+      for file in .regauto-consumer.pid .regauto-producer.pid; do
+        if [ -f "$file" ]; then
+          PID="$(cat "$file")"
+          kill "$PID" >/dev/null 2>&1
+          sleep 1
+          kill -9 "$PID" >/dev/null 2>&1
+          rm -f "$file"
+        fi
+      done
+      exit 0
+gate_policies:
+  level3:
+    enabled: true
+    reason: Downstream integration regression is active
+  level4:
+    enabled: true
+    reason: Downstream end-to-end regression is active
+  level5:
+    enabled: true
+    reason: Downstream operational regression is active
+service_owners:
+  downstream-customer-journey: downstream-team
+impact_map:
+  src/main/java/com/enterprise/regression/downstream/client/**:
+    - downstream-customer-journey
+  src/main/java/com/enterprise/regression/downstream/journey/**:
+    - downstream-customer-journey
+  src/main/java/com/enterprise/regression/downstream/ops/**:
+    - downstream-customer-journey
+  src/main/resources/**:
+    - downstream-customer-journey

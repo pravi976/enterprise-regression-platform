@@ -1,0 +1,11 @@
+id: DOWNSTREAM_TC050_OPS_STATUS
+name: Downstream operational regression
+team: downstream-team
+microservice: downstream-customer-journey
+service_type: python
+tags: [level5, operational, resilience, downstream-customer-journey, release]
+branches: [main, release]
+severity: high
+python:
+  script: regression/executors/downstream_customer_journey.py
+  function: execute

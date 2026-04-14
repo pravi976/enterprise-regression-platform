@@ -1,0 +1,59 @@
+repository: regression-test-producer
+owner: platform-regression
+default_branch: develop
+services_root: regression/services
+build_tool: gradle
+commands:
+  pre_build:
+    - 'chmod +x ./gradlew'
+  build:
+    - './gradlew --gradle-user-home .gradle-home clean test bootJar'
+  post_build: []
+  pre_test:
+    - |
+      set -e
+      JAR_PATH="$(ls -1 build/libs/regression-test-producer-*.jar 2>/dev/null | head -n 1)"
+      if [ -z "$JAR_PATH" ]; then
+        echo "Producer jar not found under build/libs" >&2
+        ls -la build/libs || true
+        exit 1
+      fi
+      java -jar "$JAR_PATH" >/dev/null 2>&1 &
+      echo $! > .regauto-producer.pid
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8091/api/upstream/ops/status" >/dev/null 2>&1; then
+          exit 0
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      echo "producer app did not become ready" >&2
+      exit 1
+  post_test:
+    - |
+      set +e
+      if [ -f .regauto-producer.pid ]; then
+        PID="$(cat .regauto-producer.pid)"
+        kill "$PID" >/dev/null 2>&1
+        sleep 1
+        kill -9 "$PID" >/dev/null 2>&1
+        rm -f .regauto-producer.pid
+      fi
+      exit 0
+gate_policies:
+  level1:
+    enabled: true
+    reason: Upstream unit-style regression is active
+  level2:
+    enabled: true
+    reason: Upstream API regression is active
+service_owners:
+  upstream-customer-service: upstream-team
+impact_map:
+  src/main/java/com/enterprise/regression/upstream/customer/**:
+    - upstream-customer-service
+  src/main/java/com/enterprise/regression/upstream/ops/**:
+    - upstream-customer-service
+  src/main/resources/**:
+    - upstream-customer-service

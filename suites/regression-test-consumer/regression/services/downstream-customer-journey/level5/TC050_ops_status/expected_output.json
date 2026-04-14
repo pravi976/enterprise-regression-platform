@@ -1,0 +1,7 @@
+{
+  "service": "regression-test-consumer",
+  "status": "UP",
+  "upstreamAvailable": true,
+  "customerJourneysLoaded": 3,
+  "resilienceMode": "STANDARD"
+}

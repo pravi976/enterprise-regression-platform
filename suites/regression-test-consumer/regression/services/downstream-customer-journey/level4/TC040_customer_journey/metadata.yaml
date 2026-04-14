@@ -1,0 +1,11 @@
+id: DOWNSTREAM_TC040_CUSTOMER_JOURNEY
+name: Downstream end-to-end customer journey regression
+team: downstream-team
+microservice: downstream-customer-journey
+service_type: python
+tags: [level4, e2e, journey, downstream-customer-journey, release]
+branches: [main, release]
+severity: critical
+python:
+  script: regression/executors/downstream_customer_journey.py
+  function: execute

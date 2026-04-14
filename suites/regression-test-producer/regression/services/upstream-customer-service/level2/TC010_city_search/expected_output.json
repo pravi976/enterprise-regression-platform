@@ -1,0 +1,8 @@
+{
+  "city": "Bengaluru",
+  "count": 2,
+  "customerIds": [
+    "CUST-1001",
+    "CUST-1003"
+  ]
+}

@@ -1,0 +1,11 @@
+id: UPSTREAM_TC010_CITY_SEARCH
+name: Upstream city search regression
+team: upstream-team
+microservice: upstream-customer-service
+service_type: python
+tags: [level2, api, component, upstream-customer-service, develop, release]
+branches: [main, develop, release]
+severity: high
+python:
+  script: regression/executors/upstream_customer_service.py
+  function: execute
