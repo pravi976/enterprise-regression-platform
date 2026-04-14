@@ -1,37 +1,29 @@
 # GitHub Actions Results-Only Operating Model
 
-Use this model when the organization does not want Azure hosting, VMs, Kubernetes, containers, or a
-separate dashboard service.
+Use this model when the organization wants the entire regression strategy to run inside GitHub Actions
+without a separately hosted dashboard.
 
 ## What Runs Where
 
-- GitHub Actions checks out the latest branch or pull request.
-- GitHub Actions builds and starts the application when needed.
-- `regauto` discovers and executes Gate 1 or Gate 2 tests from the repo's `regression/` folder.
+- GitHub Actions checks out the branch or pull request.
+- The workflow builds and starts the application when needed.
+- `regauto` discovers and executes the requested regression layer from the repo's `regression/` folder.
 - `regauto` compares actual results against `expected_output.json`.
-- GitHub Actions shows pass/fail summaries and field-level diffs in the job summary.
-- GitHub Actions uploads `summary.json`, `results.json`, and `junit.xml` as artifacts.
-- The workflow exits non-zero when a regression is found, so the PR/commit gate fails.
+- GitHub Actions publishes summaries, diffs, JUnit XML, and artifacts.
+- The job exits non-zero when a regression is detected.
 
-## Developer Experience
+## Recommended Enterprise Mapping
 
-Developers do not need a hosted dashboard. They open the GitHub Actions run and review:
+- `level1`: PR-fast unit regression.
+- `level2`: PR or post-merge service component or API regression.
+- `level3`: Nightly integration regression.
+- `level4`: Release-candidate end-to-end business journey regression.
+- `level5`: Operational certification before promotion or on a scheduled release branch cadence.
 
-- The workflow job status.
-- The GitHub job summary.
-- Clickable annotations pointing to each test's `metadata.yaml`.
-- Field-by-field differences for failed comparisons.
-- Uploaded artifacts:
-  - `summary.json`
-  - `results.json`
-  - `junit.xml`
-
-## Gate 1 Workflow
-
-Use Gate 1 for fast PR/commit validation:
+## Example Level 1 Workflow
 
 ```yaml
-name: Gate 1 Regression
+name: Level 1 Regression
 
 on:
   pull_request:
@@ -41,7 +33,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  gate1:
+  level1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,28 +42,26 @@ jobs:
           python-version: "3.11"
       - name: Install regression framework
         run: pip install git+https://github.com/pravi976/enterprise-regression-platform.git
-      - name: Run Gate 1
+      - name: Run Level 1
         run: |
-          regauto run-gate1 \
+          regauto run-level1 \
             --repo-root . \
-            --results-dir regression-results/gate1 \
+            --results-dir regression-results/level1 \
             --trigger pr \
             --commit-sha ${{ github.sha }} \
             --branch ${{ github.head_ref || github.ref_name }}
-      - name: Upload Gate 1 artifacts
+      - name: Upload Level 1 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate1-regression-results
-          path: regression-results/gate1
+          name: level1-regression-results
+          path: regression-results/level1
 ```
 
-## Gate 2 Workflow
-
-Use Gate 2 for scheduled or manual deeper validation:
+## Example Level 3 Workflow
 
 ```yaml
-name: Gate 2 Scheduled Regression
+name: Level 3 Nightly Integration Regression
 
 on:
   workflow_dispatch:
@@ -79,11 +69,11 @@ on:
     - cron: "30 18 * * 1-5"
 
 jobs:
-  gate2:
+  level3:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        branch: [develop, test, release]
+        branch: [test]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,22 +83,61 @@ jobs:
           python-version: "3.11"
       - name: Install regression framework
         run: pip install git+https://github.com/pravi976/enterprise-regression-platform.git
-      - name: Run Gate 2
+      - name: Run Level 3
         run: |
-          regauto run-gate2 \
+          regauto run-level3 \
             --repo-root . \
-            --results-dir regression-results/gate2-${{ matrix.branch }} \
+            --results-dir regression-results/level3-${{ matrix.branch }} \
             --branch ${{ matrix.branch }} \
             --trigger schedule
-      - name: Upload Gate 2 artifacts
+      - name: Upload Level 3 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate2-${{ matrix.branch }}-regression-results
-          path: regression-results/gate2-${{ matrix.branch }}
+          name: level3-${{ matrix.branch }}-regression-results
+          path: regression-results/level3-${{ matrix.branch }}
 ```
 
-## Where To See Results
+## Example Release Certification Workflow
+
+```yaml
+name: Release Certification Regression
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release-certification:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        layer: [level4, level5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install regression framework
+        run: pip install git+https://github.com/pravi976/enterprise-regression-platform.git
+      - name: Run release certification layer
+        run: |
+          regauto run-layer \
+            --repo-root . \
+            --gate ${{ matrix.layer }} \
+            --results-dir regression-results/${{ matrix.layer }} \
+            --branch release \
+            --trigger manual
+      - name: Upload certification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.layer }}-regression-results
+          path: regression-results/${{ matrix.layer }}
+```
+
+## Result Locations
 
 Open:
 
@@ -116,40 +145,21 @@ Open:
 Repository -> Actions -> Workflow run -> Summary
 ```
 
-The summary includes:
+Artifacts typically include:
 
-- Total tests.
-- Passed, failed, and errored counts.
-- Pass rate.
-- Test table by service/type/test id.
-- Field-level diff table for failures.
-
-Then open:
-
-```text
-Repository -> Actions -> Workflow run -> Artifacts
-```
-
-Download the artifact and inspect:
-
-- `summary.json` for dashboard-friendly run totals.
-- `results.json` for test-level details and diffs.
-- `junit.xml` for CI/test-report tooling.
+- `summary.json`
+- `results.json`
+- `junit.xml`
 
 ## Failure Behavior
 
-The workflow fails automatically when any test status is:
+- Exit code `1`: at least one test failed or errored.
+- Exit code `2`: the requested enabled layer found no tests or the test assets are invalid.
 
-- `failed`
-- `error`
+## Recommended Operating Pattern
 
-The framework exits with code `1` for validation or execution failures. It exits with code `2` when
-an enabled gate discovers no tests or a test folder is invalid, such as missing `expected_output.json`.
-
-## Recommended Enterprise Pattern
-
-- Keep `regression/` assets in each application repo.
-- Use GitHub Actions job summary as the management-friendly report for now.
-- Use artifacts for audit/history.
-- Use branch protection rules to require Gate 1 before merge.
-- Use scheduled Gate 2 workflows for `develop`, `test`, and `release` branches.
+- Protect `main` with `level1`.
+- Add `level2` to post-merge validation or critical PR paths.
+- Schedule `level3` on `test`.
+- Run `level4` and `level5` before release promotion.
+- Keep regression assets service-owned under each repo's `regression/` folder.

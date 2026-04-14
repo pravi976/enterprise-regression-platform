@@ -10,12 +10,44 @@ from pydantic import BaseModel, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+LAYER_ALIASES: dict[str, str] = {
+    "gate1": "level1",
+    "gate2": "level2",
+}
+
+VALID_LAYERS: tuple[str, ...] = ("level1", "level2", "level3", "level4", "level5")
+
+
+def canonical_gate_name(gate: str | None) -> str | None:
+    """Normalize legacy gate aliases to the enterprise layer model."""
+    if gate is None:
+        return None
+    normalized = gate.strip().lower()
+    if not normalized:
+        return None
+    return LAYER_ALIASES.get(normalized, normalized)
+
+
+def gate_aliases(gate: str | None) -> set[str]:
+    """Return all accepted names for a logical regression layer."""
+    canonical = canonical_gate_name(gate)
+    if canonical is None:
+        return set()
+    aliases = {canonical}
+    aliases.update(alias for alias, target in LAYER_ALIASES.items() if target == canonical)
+    return aliases
+
+
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
     database_url: str = "sqlite:///./regression.db"
     log_level: str = "INFO"
     api_key: str | None = None
+    max_parallel_tests: int = 1
+    runner_slots: int = 1
+    queue_poll_seconds: float = 2.0
+    queue_timeout_seconds: int = 900
 
     model_config = SettingsConfigDict(env_prefix="REGAUTO_", env_file=".env", extra="ignore")
 
@@ -34,7 +66,7 @@ class BranchPolicy(BaseModel):
     """Branch-specific gate, environment, and build behavior."""
 
     environment: str = "DEV"
-    gates: list[str] = Field(default_factory=lambda: ["gate1"])
+    gates: list[str] = Field(default_factory=lambda: ["level1"])
     include_tags: list[str] = Field(default_factory=list)
     exclude_tags: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
@@ -75,7 +107,15 @@ class RepositoryConfig(BaseModel):
     services_root: str = "regression/services"
     build_tool: Literal["maven", "gradle", "npm", "custom", "none"] = "none"
     commands: CommandHookConfig = Field(default_factory=CommandHookConfig)
-    gates: dict[str, list[str]] = Field(default_factory=lambda: {"gate1": ["gate1"], "gate2": ["gate2"]})
+    gates: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "level1": ["level1", "gate1"],
+            "level2": ["level2", "gate2"],
+            "level3": ["level3"],
+            "level4": ["level4"],
+            "level5": ["level5"],
+        }
+    )
     gate_policies: dict[str, GatePolicy] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     service_owners: dict[str, str] = Field(default_factory=dict)
@@ -200,25 +240,39 @@ def resolve_branch_policy(repo_root: Path, branch: str | None) -> BranchPolicy:
     branch_config = load_branch_config(repo_root)
     selected_branch = branch or branch_config.default_branch
     if selected_branch in branch_config.policies:
-        return branch_config.policies[selected_branch]
-    return BranchPolicy()
+        policy = branch_config.policies[selected_branch]
+    else:
+        policy = BranchPolicy()
+    policy.gates = [canonical_gate_name(gate) or gate for gate in policy.gates]
+    policy.disabled_gates = [canonical_gate_name(gate) or gate for gate in policy.disabled_gates]
+    policy.gate_overrides = {
+        canonical_gate_name(gate) or gate: override for gate, override in policy.gate_overrides.items()
+    }
+    return policy
 
 
 def resolve_gate_decision(repo_root: Path, gate: str | None, branch: str | None = None) -> GateDecision:
     """Resolve whether a gate is enabled at repository and branch scope."""
-    if not gate:
+    normalized_gate = canonical_gate_name(gate)
+    if not normalized_gate:
         return GateDecision(enabled=True)
     repo_config = load_repository_config(repo_root)
-    repo_gate_policy = repo_config.gate_policies.get(gate, GatePolicy())
+    repo_gate_policies = {
+        canonical_gate_name(name) or name: policy for name, policy in repo_config.gate_policies.items()
+    }
+    repo_gate_policy = repo_gate_policies.get(normalized_gate, GatePolicy())
     if not repo_gate_policy.enabled:
-        return GateDecision(enabled=False, reason=repo_gate_policy.reason or f"{gate} disabled by repository policy")
+        return GateDecision(
+            enabled=False,
+            reason=repo_gate_policy.reason or f"{normalized_gate} disabled by repository policy",
+        )
     branch_policy = resolve_branch_policy(repo_root, branch)
-    if gate in branch_policy.disabled_gates:
-        return GateDecision(enabled=False, reason=f"{gate} disabled for branch {branch}")
-    branch_gate_policy = branch_policy.gate_overrides.get(gate)
+    if normalized_gate in branch_policy.disabled_gates:
+        return GateDecision(enabled=False, reason=f"{normalized_gate} disabled for branch {branch}")
+    branch_gate_policy = branch_policy.gate_overrides.get(normalized_gate)
     if branch_gate_policy and not branch_gate_policy.enabled:
         return GateDecision(
             enabled=False,
-            reason=branch_gate_policy.reason or f"{gate} disabled by branch policy",
+            reason=branch_gate_policy.reason or f"{normalized_gate} disabled by branch policy",
         )
     return GateDecision(enabled=True)

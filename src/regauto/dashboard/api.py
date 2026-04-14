@@ -11,12 +11,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from regauto.config import Settings, load_repository_config, resolve_gate_decision
-from regauto.db import create_schema, get_session
+from regauto.capacity import RunnerCapacityManager
+from regauto.config import Settings, canonical_gate_name, load_repository_config, resolve_gate_decision
+from regauto.db import SessionLocal, create_schema, get_session
 from regauto.discovery import TestDiscovery
 from regauto.execution import ExecutionEngine
 from regauto.models import ExecutionRun, Repository, TestResult
-from regauto.persistence import persist_run, upsert_repository
+from regauto.persistence import create_run, finalize_run, update_run_status, upsert_repository
 from regauto.reporting import ReportWriter, should_fail_gate, summarize
 
 settings = Settings()
@@ -24,7 +25,7 @@ app = FastAPI(title="Enterprise Regression Dashboard API", version="0.1.0")
 
 
 class RunGateRequest(BaseModel):
-    """Request to run a gate from the dashboard UI."""
+    """Request to run a regression layer from the dashboard UI."""
 
     repo_root: Path = Field(description="Application repository root on this server or runner")
     branch: str | None = Field(default="main", description="Branch policy to apply")
@@ -123,6 +124,31 @@ def execution_results(run_id: int, session: Session = Depends(get_session)) -> d
     }
 
 
+@app.post("/run/level1", dependencies=[Depends(require_api_key)])
+def run_level1(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("level1", request, session)
+
+
+@app.post("/run/level2", dependencies=[Depends(require_api_key)])
+def run_level2(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("level2", request, session)
+
+
+@app.post("/run/level3", dependencies=[Depends(require_api_key)])
+def run_level3(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("level3", request, session)
+
+
+@app.post("/run/level4", dependencies=[Depends(require_api_key)])
+def run_level4(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("level4", request, session)
+
+
+@app.post("/run/level5", dependencies=[Depends(require_api_key)])
+def run_level5(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
+    return _run_gate("level5", request, session)
+
+
 @app.post("/run/gate1", dependencies=[Depends(require_api_key)])
 def run_gate1(request: RunGateRequest, session: Session = Depends(get_session)) -> dict[str, object]:
     return _run_gate("gate1", request, session)
@@ -137,6 +163,8 @@ def run_gate2(request: RunGateRequest, session: Session = Depends(get_session)) 
 def management_summary(session: Session = Depends(get_session)) -> dict[str, object]:
     repo_count = session.query(func.count(Repository.id)).scalar() or 0
     run_count = session.query(func.count(ExecutionRun.id)).scalar() or 0
+    waiting_runs = session.query(func.count(ExecutionRun.id)).filter(ExecutionRun.status == "waiting").scalar() or 0
+    running_runs = session.query(func.count(ExecutionRun.id)).filter(ExecutionRun.status == "running").scalar() or 0
     latest = session.query(ExecutionRun).order_by(desc(ExecutionRun.started_at)).first()
     gate_rates = session.query(ExecutionRun.gate, func.avg(ExecutionRun.pass_rate)).group_by(ExecutionRun.gate).all()
     failing_services = (
@@ -161,6 +189,9 @@ def management_summary(session: Session = Depends(get_session)) -> dict[str, obj
     return {
         "repositories_onboarded": repo_count,
         "execution_runs": run_count,
+        "runner_slots": settings.runner_slots,
+        "running_runs": running_runs,
+        "waiting_runs": waiting_runs,
         "gate_pass_rates": {gate: round(rate or 0, 2) for gate, rate in gate_rates},
         "top_failing_microservices": [{"service": service, "failures": count} for service, count in failing_services],
         "rest_vs_jms_health": [
@@ -185,35 +216,64 @@ def management_summary(session: Session = Depends(get_session)) -> dict[str, obj
 
 def _run_gate(gate: str, request: RunGateRequest, session: Session) -> dict[str, object]:
     repo_root = request.repo_root.resolve()
+    gate = canonical_gate_name(gate) or gate
     if not repo_root.exists():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Repository root not found: {repo_root}")
-    gate_decision = resolve_gate_decision(repo_root, gate, request.branch)
-    if not gate_decision.enabled:
-        return {
-            "status": "skipped",
-            "gate": gate,
-            "branch": request.branch,
-            "reason": gate_decision.reason or "Gate disabled by policy",
-        }
-    tests = TestDiscovery().discover(repo_root=repo_root, gate=gate, branch=request.branch)
-    if not tests:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No tests discovered for {gate} on branch {request.branch}",
-        )
-    results = ExecutionEngine().run(tests)
     repo_config = load_repository_config(repo_root)
-    output_dir = request.results_dir or repo_root / "regression-results" / gate
-    ReportWriter().write(results, output_dir)
     upsert_repository(session, repo_config.repository, repo_config.remote_url, repo_config.owner)
-    run = persist_run(session, repo_config.repository, gate, request.trigger, results, branch=request.branch)
-    summary = summarize(results)
-    return {
-        "run_id": run.id,
-        "status": "failed" if should_fail_gate(results) else "passed",
-        "summary": summary,
-        "results_dir": str(output_dir),
-    }
+    run = create_run(
+        session,
+        repository=repo_config.repository,
+        gate=gate,
+        trigger=request.trigger,
+        branch=request.branch,
+        status="waiting",
+    )
+    capacity = RunnerCapacityManager(
+        session_factory=SessionLocal,
+        runner_slots=settings.runner_slots,
+        poll_seconds=settings.queue_poll_seconds,
+        timeout_seconds=settings.queue_timeout_seconds,
+    )
+    if not capacity.wait_for_slot(run.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Run {run.id} timed out while waiting for a runner slot",
+        )
+    try:
+        gate_decision = resolve_gate_decision(repo_root, gate, request.branch)
+        if not gate_decision.enabled:
+            update_run_status(session, run.id, "skipped")
+            return {
+                "status": "skipped",
+                "run_id": run.id,
+                "gate": gate,
+                "branch": request.branch,
+                "reason": gate_decision.reason or "Gate disabled by policy",
+            }
+        tests = TestDiscovery().discover(repo_root=repo_root, gate=gate, branch=request.branch)
+        if not tests:
+            update_run_status(session, run.id, "failed")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No tests discovered for {gate} on branch {request.branch}",
+            )
+        results = ExecutionEngine().run(tests)
+        output_dir = request.results_dir or repo_root / "regression-results" / gate
+        ReportWriter().write(results, output_dir)
+        run = finalize_run(session, run.id, results)
+        summary = summarize(results)
+        return {
+            "run_id": run.id,
+            "status": "failed" if should_fail_gate(results) else "passed",
+            "summary": summary,
+            "results_dir": str(output_dir),
+        }
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        update_run_status(session, run.id, "failed")
+        raise
 
 
 _DASHBOARD_HTML = """
@@ -242,7 +302,7 @@ _DASHBOARD_HTML = """
 </head>
 <body>
   <h1>Enterprise Regression Dashboard</h1>
-  <div class="muted">Run Gate 1/Gate 2 and inspect latest pass/fail summaries with field-level diffs.</div>
+  <div class="muted">Run Level 1 through Level 5 regression layers and inspect latest pass/fail summaries with field-level diffs.</div>
 
   <section class="panel">
     <label>Repository root on this runner/server</label>
@@ -251,8 +311,11 @@ _DASHBOARD_HTML = """
     <input id="branch" value="main" />
     <label>API key, only if REGAUTO_API_KEY is configured</label>
     <input id="apiKey" type="password" placeholder="optional" />
-    <button onclick="runGate('gate1')">Run Gate 1</button>
-    <button onclick="runGate('gate2')">Run Gate 2</button>
+    <button onclick="runGate('level1')">Run Level 1</button>
+    <button onclick="runGate('level2')">Run Level 2</button>
+    <button onclick="runGate('level3')">Run Level 3</button>
+    <button onclick="runGate('level4')">Run Level 4</button>
+    <button onclick="runGate('level5')">Run Level 5</button>
     <button class="secondary" onclick="loadLatest()">View Latest Results</button>
   </section>
 

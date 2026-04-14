@@ -14,7 +14,7 @@ def test_scaffold_python_test_creates_executable_assets(tmp_path: Path) -> None:
     result = scaffold_python_test(
         repo_root=tmp_path,
         service="customer-service",
-        gate="gate1",
+        gate="level1",
         test_id="TC001_customer_lookup",
         team="customer-team",
         branches=["main"],
@@ -27,14 +27,35 @@ def test_scaffold_python_test_creates_executable_assets(tmp_path: Path) -> None:
         / "regression"
         / "services"
         / "customer-service"
-        / "gate1"
+        / "level1"
         / "TC001_customer_lookup"
         / "metadata.yaml"
     ) in result.created
 
-    tests = TestDiscovery().discover(tmp_path, gate="gate1", branch="main")
+    tests = TestDiscovery().discover(tmp_path, gate="level1", branch="main")
     results = ExecutionEngine().run(tests)
 
     assert len(results) == 1
     assert results[0].status == "passed"
     assert results[0].service_type == "python"
+
+
+def test_scaffold_accepts_legacy_gate_alias_and_creates_level_folder(tmp_path: Path) -> None:
+    result = scaffold_python_test(
+        repo_root=tmp_path,
+        service="customer-service",
+        gate="gate1",
+        test_id="TC002_customer_alias",
+        team="customer-team",
+        branches=["main"],
+    )
+
+    assert (
+        tmp_path
+        / "regression"
+        / "services"
+        / "customer-service"
+        / "level1"
+        / "TC002_customer_alias"
+        / "metadata.yaml"
+    ) in result.created

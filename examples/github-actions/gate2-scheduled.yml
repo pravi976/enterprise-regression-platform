@@ -1,4 +1,4 @@
-name: Gate 2 Scheduled Regression
+name: Level 3 Scheduled Regression
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
     - cron: "30 18 * * 1-5"
 
 jobs:
-  gate2:
+  level3:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        branch: [develop, test, release]
+        branch: [test]
     env:
       REGAUTO_DATABASE_URL: ${{ secrets.REGAUTO_DATABASE_URL }}
     steps:
@@ -22,11 +22,11 @@ jobs:
           python-version: "3.11"
       - name: Install regression framework
         run: pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
-      - name: Run Gate 2 and publish dashboard metadata
+      - name: Run Level 3 and publish dashboard metadata
         run: |
-          regauto run-gate2 \
+          regauto run-level3 \
             --repo-root . \
-            --results-dir regression-results/gate2 \
+            --results-dir regression-results/level3 \
             --branch ${{ matrix.branch }} \
             --trigger schedule \
             --publish
@@ -34,5 +34,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate2-regression-results
-          path: regression-results/gate2
+          name: level3-regression-results
+          path: regression-results/level3

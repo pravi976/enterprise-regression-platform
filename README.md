@@ -2,7 +2,22 @@
 
 Centralized Python regression automation framework for multi-repository GitHub quality gates.
 
-## Quick start
+## Enterprise Layer Model
+
+The framework supports a practical enterprise regression stack:
+
+- `level1`: Unit regression for fast local logic validation.
+- `level2`: Component or API regression for each service independently.
+- `level3`: Integration regression for service-to-service, database, and messaging flows.
+- `level4`: End-to-end regression for full business journeys.
+- `level5`: Operational regression for jobs, configs, monitoring, security, and resilience checks.
+
+Legacy aliases are still supported:
+
+- `gate1` maps to `level1`
+- `gate2` maps to `level2`
+
+## Quick Start
 
 ```powershell
 cd C:\Users\pravi\spring-services\enterprise-regression-platform
@@ -10,43 +25,123 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 regauto discover-tests --repo-root .\samples\sample-application-repo
-regauto run-gate1 --repo-root .\samples\sample-application-repo --results-dir .\results
-regauto run-gate2 --repo-root .\samples\sample-application-repo --results-dir .\results
+regauto run-level1 --repo-root .\samples\sample-application-repo --results-dir .\results\level1
+regauto run-level3 --repo-root .\samples\sample-application-repo --results-dir .\results\level3 --branch test
+regauto run-level5 --repo-root .\samples\sample-application-repo --results-dir .\results\level5 --branch release
 uvicorn regauto.dashboard.api:app --reload
 ```
 
-The sample tests use the built-in `echo` executor and a file-backed JMS provider. For real REST
-services, set `service_type: rest` and provide endpoint details. For JMS, set `service_type: jms`
-and register an enterprise broker provider.
+## CLI Commands
 
-Teams can also add service-owned Python executors without changing the core framework. Set
-`service_type: python` in `metadata.yaml`, then add a service-named file such as
-`regression/executors/customer_service.py` or
-`regression/services/customer-service/customer_service.py`. The file must expose
-`execute(input_payload, context)` and return the actual JSON-compatible result. The framework still
-loads `input.json`, runs the Python executor, compares the returned actual result against
-`expected_output.json`, and fails the gate with field-level differences when values are missing or
-different.
+Use the explicit layer commands for most automation:
+
+```powershell
+regauto run-level1 --repo-root C:\path\to\repo --branch develop
+regauto run-level2 --repo-root C:\path\to\repo --branch develop
+regauto run-level3 --repo-root C:\path\to\repo --branch test
+regauto run-level4 --repo-root C:\path\to\repo --branch release
+regauto run-level5 --repo-root C:\path\to\repo --branch release
+regauto run-layer --repo-root C:\path\to\repo --gate level3 --branch test
+regauto run-full --repo-root C:\path\to\repo
+```
+
+`run-gate1` and `run-gate2` remain available for backward compatibility.
+
+## Repository Layout
+
+Each application repository keeps its own regression assets:
+
+```text
+repo-root/
+  regression/
+    config/
+      regression.yaml
+      branches.yaml
+    executors/
+      customer_service.py
+    services/
+      customer-service/
+        level1/
+          TC001_customer_lookup/
+            input.json
+            expected_output.json
+            metadata.yaml
+        level3/
+          TC030_customer_profile_sync/
+            input.json
+            expected_output.json
+            metadata.yaml
+      payment-service/
+        level4/
+          TC040_payment_refund_journey/
+            input.json
+            expected_output.json
+            metadata.yaml
+      notification-service/
+        level5/
+          TC050_notification_job_health/
+            input.json
+            expected_output.json
+            metadata.yaml
+```
+
+## Minimal Configuration
+
+`regression/config/regression.yaml`:
+
+```yaml
+repository: your-application-repo
+owner: your-team
+default_branch: main
+services_root: regression/services
+build_tool: none
+gate_policies:
+  level1:
+    enabled: true
+  level2:
+    enabled: true
+  level3:
+    enabled: true
+  level4:
+    enabled: true
+  level5:
+    enabled: true
+impact_map:
+  src/customer/**:
+    - customer-service
+```
+
+`regression/config/branches.yaml`:
+
+```yaml
+default_branch: main
+policies:
+  develop:
+    environment: DEV
+    gates: [level1, level2]
+    include_tags: [develop]
+    disabled_gates: [level3, level4, level5]
+  test:
+    environment: QA
+    gates: [level1, level2, level3]
+    include_tags: [test]
+    disabled_gates: [level4, level5]
+  release:
+    environment: PREPROD
+    gates: [level1, level2, level3, level4, level5]
+    include_tags: [release]
+```
+
+## Service-Owned Python Executors
+
+Teams can add Python executors without changing the core framework. Set `service_type: python` in
+`metadata.yaml`, then add a service-owned script under `regression/executors/` or the service folder.
 
 ```yaml
 service_type: python
 python:
   script: regression/executors/customer_service.py
   function: execute
-```
-
-To generate this skeleton automatically:
-
-```powershell
-regauto scaffold-python-test `
-  --repo-root C:\path\to\application-repo `
-  --service customer-service `
-  --test-id TC001_customer_lookup `
-  --team customer-team `
-  --gate gate1 `
-  --branch main `
-  --branch develop `
-  --tag critical
 ```
 
 ```python
@@ -59,98 +154,41 @@ def execute(input_payload, context):
     }
 ```
 
-Gates can be enabled or disabled per repository in `regression/config/regression.yaml` using
-`gate_policies`, and per branch in `regression/config/branches.yaml` using `disabled_gates` or
-`gate_overrides`. A disabled gate writes a skipped `summary.json` and exits with code `0`.
-
-## Add a new application repository
-
-To onboard another repository, add a `regression/` folder to that application repo. The central
-framework does not need code changes.
-
-```text
-repo-root/
-  regression/
-    config/
-      regression.yaml
-      branches.yaml
-    executors/
-      customer_service.py
-    services/
-      customer-service/
-        gate1/
-          TC001_customer_lookup/
-            input.json
-            expected_output.json
-            metadata.yaml
-```
-
-Minimum `regression/config/regression.yaml`:
-
-```yaml
-repository: your-application-repo
-owner: your-team
-default_branch: main
-services_root: regression/services
-build_tool: none
-gate_policies:
-  gate1:
-    enabled: true
-  gate2:
-    enabled: true
-impact_map:
-  src/customer/**:
-    - customer-service
-```
-
-Minimum `regression/config/branches.yaml`:
-
-```yaml
-default_branch: main
-policies:
-  main:
-    environment: DEV
-    gates: [gate1]
-    include_tags: [main]
-  release:
-    environment: RELEASE
-    gates: [gate1, gate2]
-    include_tags: [release]
-```
-
-Fastest way to generate a service-owned Python test skeleton:
+To scaffold a test quickly:
 
 ```powershell
 regauto scaffold-python-test `
-  --repo-root C:\path\to\your-application-repo `
+  --repo-root C:\path\to\application-repo `
   --service customer-service `
   --test-id TC001_customer_lookup `
   --team customer-team `
-  --gate gate1 `
+  --gate level1 `
   --branch main `
-  --branch release `
+  --branch develop `
   --tag critical
 ```
 
-Then copy one of the GitHub Actions examples from `examples/github-actions/` into the new repo under
-`.github/workflows/`, update the framework URL to
-`https://github.com/pravi976/enterprise-regression-platform.git`, and run the workflow.
+## GitHub Actions
 
-## Standard VM deployment
+The framework is designed to plug into GitHub Actions directly:
 
-Deploy it on standard Linux/Windows servers or CI agents using a Python virtual environment:
+- Run `level1` and `level2` on pull requests for fast feedback.
+- Run `level3` nightly in test-like environments.
+- Run `level4` and `level5` on release branches or before production promotion.
+- Publish `summary.json`, `results.json`, and `junit.xml` as artifacts.
 
-```powershell
-python -m venv C:\regauto\venv
-C:\regauto\venv\Scripts\python.exe -m pip install .
-```
+Ready-to-copy examples live under `examples/github-actions/`.
 
-Linux API hosting can use `systemd`; see `examples/deployment/regauto-dashboard.service`.
-Windows scheduled execution can use Task Scheduler calling
-`examples/deployment/windows-scheduled-run.ps1`.
+## Deployment Options
 
-If you do not want any hosted dashboard service, use the GitHub Actions results-only model in
-`docs/github-actions-results-only.md`.
+You can use the framework in different operating models:
 
-For a complete local validation against `sample-producer` and `sample-consumer`, see
-`docs/testing-sample-producer-consumer.md`.
+- Results-only GitHub Actions workflows with no hosted dashboard.
+- Standard Linux or Windows runners with Python virtual environments.
+- Optional FastAPI dashboard for centralized visibility.
+
+See:
+
+- `docs/github-actions-results-only.md`
+- `docs/testing-sample-producer-consumer.md`
+- `docs/azure-vm-non-container-deployment.md`

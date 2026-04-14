@@ -1,0 +1,9 @@
+id: TC050_notification_job_health
+name: Notification operational readiness
+description: Verifies jobs, monitoring, and resilience checks for notification processing.
+team: messaging-team
+microservice: notification-service
+service_type: echo
+tags: [level5, operational, resilience, notification-service, release]
+branches: [release]
+severity: high

@@ -11,19 +11,43 @@ commands:
   pre_test: []
   post_test: []
 gates:
-  gate1:
+  level1:
+    - level1
     - gate1
+    - unit
     - critical
-  gate2:
+  level2:
+    - level2
     - gate2
-    - full
+    - component
+    - api
+  level3:
+    - level3
+    - integration
+  level4:
+    - level4
+    - e2e
+    - journey
+  level5:
+    - level5
+    - operational
+    - resilience
 gate_policies:
-  gate1:
+  level1:
     enabled: true
-    reason: Fast critical gate is active
-  gate2:
+    reason: Fast unit regression layer is active
+  level2:
     enabled: true
-    reason: Broader regression gate is active
+    reason: Component and API regression layer is active
+  level3:
+    enabled: true
+    reason: Integration regression layer is active
+  level4:
+    enabled: true
+    reason: End-to-end regression layer is active
+  level5:
+    enabled: true
+    reason: Operational regression layer is active
 service_owners:
   customer-service: customer-platform-team
   payment-service: payments-team

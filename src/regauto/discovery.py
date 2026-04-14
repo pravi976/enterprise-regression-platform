@@ -6,7 +6,14 @@ from pathlib import Path
 
 import structlog
 
-from regauto.config import TestCase, TestMetadata, load_repository_config, load_yaml
+from regauto.config import (
+    TestCase,
+    TestMetadata,
+    canonical_gate_name,
+    gate_aliases,
+    load_repository_config,
+    load_yaml,
+)
 
 LOGGER = structlog.get_logger()
 
@@ -23,6 +30,8 @@ class TestDiscovery:
         branch: str | None = None,
     ) -> list[TestCase]:
         repo_root = repo_root.resolve()
+        requested_gate = canonical_gate_name(gate)
+        accepted_gate_names = gate_aliases(gate)
         repo_config = load_repository_config(repo_root)
         services_root = repo_root / repo_config.services_root
         if not services_root.exists():
@@ -35,8 +44,8 @@ class TestDiscovery:
             if services and service not in services:
                 continue
             for gate_dir in sorted(path for path in service_dir.iterdir() if path.is_dir()):
-                current_gate = gate_dir.name
-                if gate and current_gate != gate:
+                current_gate = canonical_gate_name(gate_dir.name) or gate_dir.name
+                if accepted_gate_names and gate_dir.name not in accepted_gate_names and current_gate != requested_gate:
                     continue
                 for test_dir in sorted(path for path in gate_dir.iterdir() if path.is_dir()):
                     test_case = self._build_test_case(repo_config.repository, service, current_gate, test_dir)

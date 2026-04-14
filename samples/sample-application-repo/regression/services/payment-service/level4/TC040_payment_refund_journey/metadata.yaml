@@ -1,0 +1,9 @@
+id: TC040_payment_refund_journey
+name: Refund business journey
+description: Validates the end-to-end refund journey across payment and order services.
+team: payments-team
+microservice: payment-service
+service_type: echo
+tags: [level4, e2e, journey, payment-service, release]
+branches: [release]
+severity: critical

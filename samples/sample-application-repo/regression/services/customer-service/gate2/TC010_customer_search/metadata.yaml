@@ -2,6 +2,6 @@ id: TC010_customer_search
 name: Search customers by name
 team: customer-platform-team
 microservice: customer-service
-tags: [gate2, full, customer-service]
+tags: [level2, gate2, component, api, customer-service, test, release]
 executor: echo
 severity: medium

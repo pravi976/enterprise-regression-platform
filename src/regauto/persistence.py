@@ -26,6 +26,49 @@ def upsert_repository(session: Session, name: str, url: str | None, owner: str |
     return repo
 
 
+def create_run(
+    session: Session,
+    repository: str,
+    gate: str,
+    trigger: str,
+    commit_sha: str | None = None,
+    branch: str | None = None,
+    status: str = "waiting",
+) -> ExecutionRun:
+    """Create an execution run before tests begin so capacity can be coordinated."""
+    run = ExecutionRun(
+        repository=repository,
+        gate=gate,
+        trigger=trigger,
+        commit_sha=commit_sha,
+        branch=branch,
+        status=status,
+        pass_rate=0,
+        total=0,
+    )
+    if status == "waiting":
+        run.started_at = datetime.now(UTC)
+    if status in {"skipped", "timed_out"}:
+        run.finished_at = datetime.now(UTC)
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return run
+
+
+def update_run_status(session: Session, run_id: int, status: str) -> ExecutionRun | None:
+    """Update a run status in place."""
+    run = session.get(ExecutionRun, run_id)
+    if run is None:
+        return None
+    run.status = status
+    if status in {"skipped", "failed", "passed", "timed_out"}:
+        run.finished_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(run)
+    return run
+
+
 def persist_run(
     session: Session,
     repository: str,
@@ -67,6 +110,44 @@ def persist_run(
             )
         )
     session.add(run)
+    session.commit()
+    session.refresh(run)
+    return run
+
+
+def finalize_run(
+    session: Session,
+    run_id: int,
+    results: list[TestExecutionResult],
+) -> ExecutionRun:
+    """Finalize a pre-created execution run with summary and test-level details."""
+    run = session.get(ExecutionRun, run_id)
+    if run is None:
+        raise ValueError(f"Execution run {run_id} not found")
+    run.results.clear()
+    summary = summarize(results)
+    run.status = "failed" if should_fail_gate(results) else "passed"
+    run.pass_rate = float(summary["pass_rate"])
+    run.total = int(summary["total"])
+    run.finished_at = datetime.now(UTC)
+    for item in results:
+        differences = None
+        if item.comparison:
+            differences = json.dumps([asdict(diff) for diff in item.comparison.differences], default=str)
+        run.results.append(
+            TestResult(
+                test_id=item.test_id,
+                service=item.service,
+                team=item.team,
+                gate=item.gate,
+                status=item.status,
+                service_type=item.service_type,
+                failure_type=item.failure_type,
+                duration_ms=item.duration_ms,
+                error=item.error,
+                differences_json=differences,
+            )
+        )
     session.commit()
     session.refresh(run)
     return run

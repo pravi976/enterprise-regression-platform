@@ -8,9 +8,9 @@ on:
         required: true
         default: develop
       gate:
-        description: Gate to run
+        description: Regression layer to run
         required: true
-        default: gate1
+        default: level1
   schedule:
     - cron: "30 18 * * 1-5"
 
@@ -25,12 +25,12 @@ jobs:
           python-version: "3.11"
       - name: Install regression framework directly on runner
         run: python -m pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
-      - name: Checkout branch, build app, and run regression gate
+      - name: Checkout branch, build app, and run regression layer
         run: |
           regauto checkout-build-run \
             --remote-url https://github.com/YOUR_ORG/YOUR_APP_REPO.git \
             --branch "${{ inputs.branch || 'develop' }}" \
-            --gate "${{ inputs.gate || 'gate1' }}" \
+            --gate "${{ inputs.gate || 'level1' }}" \
             --workspace-root "$RUNNER_TEMP/regression-workspaces" \
             --directory-name YOUR_APP_REPO \
             --results-dir "$RUNNER_TEMP/regression-results" \

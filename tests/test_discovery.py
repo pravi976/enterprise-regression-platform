@@ -8,7 +8,7 @@ from regauto.config import resolve_gate_decision
 def test_discovers_gate1_sample_tests() -> None:
     repo_root = Path(__file__).parents[1] / "samples" / "sample-application-repo"
 
-    tests = TestDiscovery().discover(repo_root, gate="gate1")
+    tests = TestDiscovery().discover(repo_root, gate="level1")
 
     assert {test.service for test in tests} == {
         "customer-service",
@@ -16,13 +16,32 @@ def test_discovers_gate1_sample_tests() -> None:
         "notification-service",
         "recommendation-service",
     }
-    assert all(test.gate == "gate1" for test in tests)
+    assert all(test.gate == "level1" for test in tests)
+
+
+def test_legacy_gate_alias_maps_to_level1() -> None:
+    repo_root = Path(__file__).parents[1] / "samples" / "sample-application-repo"
+
+    tests = TestDiscovery().discover(repo_root, gate="gate1")
+
+    assert tests
+    assert all(test.gate == "level1" for test in tests)
+
+
+def test_discovers_operational_level_tests() -> None:
+    repo_root = Path(__file__).parents[1] / "samples" / "sample-application-repo"
+
+    tests = TestDiscovery().discover(repo_root, gate="level5", branch="release")
+
+    assert len(tests) == 1
+    assert tests[0].service == "notification-service"
+    assert tests[0].gate == "level5"
 
 
 def test_discovers_branch_applicable_tests() -> None:
     repo_root = Path(__file__).parents[1] / "samples" / "sample-application-repo"
 
-    tests = TestDiscovery().discover(repo_root, gate="gate1", branch="release")
+    tests = TestDiscovery().discover(repo_root, gate="level1", branch="release")
 
     assert tests
     assert all("release" in test.metadata.branches for test in tests)
@@ -31,17 +50,17 @@ def test_discovers_branch_applicable_tests() -> None:
 def test_resolves_disabled_gate_for_branch() -> None:
     repo_root = Path(__file__).parents[1] / "samples" / "sample-application-repo"
 
-    decision = resolve_gate_decision(repo_root, "gate2", "develop")
+    decision = resolve_gate_decision(repo_root, "level3", "develop")
 
     assert not decision.enabled
 
 
 def test_discovery_flags_missing_expected_output(tmp_path: Path) -> None:
-    test_dir = tmp_path / "regression" / "services" / "svc" / "gate1" / "TC001"
+    test_dir = tmp_path / "regression" / "services" / "svc" / "level1" / "TC001"
     test_dir.mkdir(parents=True)
     (tmp_path / "regression" / "config").mkdir(parents=True)
     (tmp_path / "regression" / "config" / "regression.yaml").write_text("repository: sample\n")
     (test_dir / "input.json").write_text("{}")
 
     with pytest.raises(ValueError, match="expected_output.json"):
-        TestDiscovery().discover(tmp_path, gate="gate1")
+        TestDiscovery().discover(tmp_path, gate="level1")

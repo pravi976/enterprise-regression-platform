@@ -2,41 +2,50 @@ default_branch: main
 policies:
   develop:
     environment: DEV
-    gates: [gate1]
+    gates: [level1, level2]
     include_tags: [develop]
     exclude_tags: []
     services: []
     clean_workspace: false
-    disabled_gates: [gate2]
+    disabled_gates: [level3, level4, level5]
     gate_overrides:
-      gate1:
+      level1:
         enabled: true
-        reason: Develop branch runs fast validation only
+        reason: Develop branch runs fast validation first
+      level2:
+        enabled: true
+        reason: Develop branch runs service-level API checks
     commands:
       build: []
   test:
     environment: QA
-    gates: [gate1, gate2]
+    gates: [level1, level2, level3]
     include_tags: [test]
     exclude_tags: []
     services: []
     clean_workspace: false
-    disabled_gates: []
+    disabled_gates: [level4, level5]
     commands:
       build: []
   release:
     environment: PREPROD
-    gates: [gate1, gate2]
+    gates: [level1, level2, level3, level4, level5]
     include_tags: [release]
     exclude_tags: []
     services: []
     clean_workspace: true
     disabled_gates: []
     gate_overrides:
-      gate1:
+      level1:
         enabled: true
-      gate2:
+      level2:
         enabled: true
-        reason: Release branch requires full certification
+      level3:
+        enabled: true
+      level4:
+        enabled: true
+      level5:
+        enabled: true
+        reason: Release branch requires full certification including operational checks
     commands:
       build: []

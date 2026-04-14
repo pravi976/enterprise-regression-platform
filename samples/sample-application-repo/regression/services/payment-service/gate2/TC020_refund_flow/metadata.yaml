@@ -2,6 +2,6 @@ id: TC020_refund_flow
 name: Refund processing happy path
 team: payments-team
 microservice: payment-service
-tags: [gate2, full, payment-service]
+tags: [level2, gate2, component, api, payment-service, test, release]
 executor: echo
 severity: high

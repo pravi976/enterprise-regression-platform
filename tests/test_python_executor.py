@@ -6,7 +6,7 @@ from regauto.execution import ExecutionEngine
 
 
 def test_python_executor_uses_service_named_file(tmp_path: Path) -> None:
-    test_dir = tmp_path / "regression" / "services" / "customer-service" / "gate1" / "TC001"
+    test_dir = tmp_path / "regression" / "services" / "customer-service" / "level1" / "TC001"
     executor_dir = tmp_path / "regression" / "executors"
     test_dir.mkdir(parents=True)
     executor_dir.mkdir(parents=True)
@@ -18,7 +18,7 @@ def test_python_executor_uses_service_named_file(tmp_path: Path) -> None:
                 "id: CUSTOMER_PY_TC001",
                 "team: customer-team",
                 "service_type: python",
-                "tags: [gate1, customer-service, python]",
+                "tags: [level1, gate1, customer-service, python]",
             ]
         ),
         encoding="utf-8",
@@ -38,7 +38,7 @@ def test_python_executor_uses_service_named_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    tests = TestDiscovery().discover(tmp_path, gate="gate1")
+    tests = TestDiscovery().discover(tmp_path, gate="level1")
     results = ExecutionEngine().run(tests)
 
     assert len(results) == 1

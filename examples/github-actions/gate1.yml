@@ -1,4 +1,4 @@
-name: Gate 1 Regression
+name: Level 1 Regression
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  gate1:
+  level1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,11 +16,11 @@ jobs:
           python-version: "3.11"
       - name: Install regression framework
         run: pip install git+https://github.com/YOUR_ORG/enterprise-regression-platform.git
-      - name: Run Gate 1
+      - name: Run Level 1
         run: |
-          regauto run-gate1 \
+          regauto run-level1 \
             --repo-root . \
-            --results-dir regression-results/gate1 \
+            --results-dir regression-results/level1 \
             --trigger pr \
             --commit-sha ${{ github.sha }} \
             --branch ${{ github.head_ref || github.ref_name }}
@@ -28,5 +28,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate1-regression-results
-          path: regression-results/gate1
+          name: level1-regression-results
+          path: regression-results/level1

@@ -7,6 +7,7 @@ import os
 import time
 import importlib.util
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 import httpx
 import structlog
 
+from regauto.config import Settings
 from regauto.comparison import ComparisonResult, JsonComparator
 from regauto.config import TestCase
 from regauto.jms import FileJmsProvider, JmsProvider, build_correlation_id
@@ -48,6 +50,9 @@ class TestExecutor(ABC):
     @abstractmethod
     def execute(self, test_case: TestCase, input_payload: Any) -> Any:
         """Execute a test case and return actual output."""
+
+    def close(self) -> None:
+        """Release any per-test resources such as connections or handles."""
 
 
 class EchoExecutor(TestExecutor):
@@ -176,22 +181,22 @@ class ExecutorRegistry:
     """Registry for built-in and future executor plugins."""
 
     def __init__(self) -> None:
-        self._executors: dict[str, TestExecutor] = {
-            "echo": EchoExecutor(),
-            "http": RestExecutor(),
-            "rest": RestExecutor(),
-            "jms": JmsExecutor(),
-            "python": PythonExecutor(),
+        self._executor_factories: dict[str, type[TestExecutor]] = {
+            "echo": EchoExecutor,
+            "http": RestExecutor,
+            "rest": RestExecutor,
+            "jms": JmsExecutor,
+            "python": PythonExecutor,
         }
 
-    def get(self, name: str) -> TestExecutor:
+    def create(self, name: str) -> TestExecutor:
         try:
-            return self._executors[name]
+            return self._executor_factories[name]()
         except KeyError as exc:
             raise ValueError(f"Unknown executor plugin: {name}") from exc
 
     def register(self, name: str, executor: TestExecutor) -> None:
-        self._executors[name] = executor
+        self._executor_factories[name] = executor.__class__
 
 
 class ExecutionEngine:
@@ -200,9 +205,21 @@ class ExecutionEngine:
     def __init__(self, comparator: JsonComparator | None = None, registry: ExecutorRegistry | None = None) -> None:
         self.comparator = comparator or JsonComparator()
         self.registry = registry or ExecutorRegistry()
+        self.settings = Settings()
 
     def run(self, test_cases: list[TestCase]) -> list[TestExecutionResult]:
-        return [self.run_one(test_case) for test_case in test_cases]
+        if len(test_cases) <= 1 or self.settings.max_parallel_tests <= 1:
+            return [self.run_one(test_case) for test_case in test_cases]
+        results: list[TestExecutionResult | None] = [None] * len(test_cases)
+        max_workers = min(self.settings.max_parallel_tests, len(test_cases))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_index = {
+                pool.submit(self.run_one, test_case): index
+                for index, test_case in enumerate(test_cases)
+            }
+            for future in as_completed(future_to_index):
+                results[future_to_index[future]] = future.result()
+        return [result for result in results if result is not None]
 
     def run_one(self, test_case: TestCase) -> TestExecutionResult:
         start = time.perf_counter()
@@ -212,7 +229,7 @@ class ExecutionEngine:
             executor_name = test_case.metadata.executor
             if test_case.metadata.service_type in {"rest", "jms", "python"}:
                 executor_name = test_case.metadata.service_type
-            executor = self.registry.get(executor_name)
+            executor = self.registry.create(executor_name)
             actual_payload = executor.execute(test_case, input_payload)
             comparison = self.comparator.compare(
                 expected_payload,
@@ -224,6 +241,9 @@ class ExecutionEngine:
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("test_execution_error", test_id=test_case.id, error=str(exc))
             return self._result(test_case, start, "error", None, str(exc), None, "execution_failure")
+        finally:
+            if "executor" in locals():
+                executor.close()
 
     def _result(
         self,

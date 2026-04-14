@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from regauto.config import canonical_gate_name, gate_aliases
+
 
 @dataclass(frozen=True)
 class ScaffoldResult:
@@ -47,15 +49,26 @@ def scaffold_python_test(
     """Create a service-owned Python executor and matching test asset skeleton."""
     repo_root = repo_root.resolve()
     module_name = service_module_name(service)
+    normalized_gate = canonical_gate_name(gate)
+    if not normalized_gate:
+        raise ValueError("Regression layer must be provided")
     folder_name = test_folder_name(test_id)
     branch_values = branches or ["main", "develop", "test", "release"]
-    tag_values = sorted(set((tags or []) + [gate, service, "python", *branch_values]))
+    tag_values = sorted(set((tags or []) + list(gate_aliases(normalized_gate)) + [service, "python", *branch_values]))
 
     executor_path = repo_root / "regression" / "executors" / f"{module_name}.py"
-    test_dir = repo_root / "regression" / "services" / service / gate / folder_name
+    test_dir = repo_root / "regression" / "services" / service / normalized_gate / folder_name
     files = {
         executor_path: _executor_template(),
-        test_dir / "metadata.yaml": _metadata_template(test_id, service, gate, team, tag_values, branch_values, module_name),
+        test_dir / "metadata.yaml": _metadata_template(
+            test_id,
+            service,
+            normalized_gate,
+            team,
+            tag_values,
+            branch_values,
+            module_name,
+        ),
         test_dir / "input.json": _json_template({"sampleId": "SAMPLE-001"}),
         test_dir / "expected_output.json": _json_template(
             {

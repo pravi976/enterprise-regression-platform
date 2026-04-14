@@ -1,0 +1,9 @@
+id: TC030_customer_profile_sync
+name: Customer profile integration sync
+description: Verifies service-to-service synchronization across customer profile dependencies.
+team: customer-platform-team
+microservice: customer-service
+service_type: echo
+tags: [level3, integration, customer-service, test, release]
+branches: [test, release]
+severity: high
