@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import logging
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+import httpx
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
+from regauto.build import BuildOrchestrator
 from regauto.capacity import RunnerCapacityManager
-from regauto.config import Settings, canonical_gate_name, load_repository_config, resolve_gate_decision
+from regauto.config import Settings, VALID_LAYERS, canonical_gate_name, load_repository_config, resolve_branch_policy, resolve_gate_decision
 from regauto.db import SessionLocal, create_schema, get_session
 from regauto.discovery import TestDiscovery
 from regauto.execution import ExecutionEngine
 from regauto.models import ExecutionRun, Repository, TestResult
 from regauto.persistence import create_run, finalize_run, update_run_status, upsert_repository
 from regauto.reporting import ReportWriter, should_fail_gate, summarize
+from regauto.source_control import CheckoutRequest, GitRepositoryManager
 
 settings = Settings()
 app = FastAPI(title="Enterprise Regression Dashboard API", version="0.1.0")
@@ -48,6 +55,25 @@ def startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/webhooks/github")
+async def github_webhook(
+    request: Request,
+    background: BackgroundTasks,
+    x_github_event: str | None = Header(default=None),
+    x_hub_signature_256: str | None = Header(default=None),
+) -> dict[str, object]:
+    body = await request.body()
+    if settings.github_webhook_secret:
+        if not _verify_github_signature(settings.github_webhook_secret, body, x_hub_signature_256):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
+    event = (x_github_event or "").strip().lower()
+    if event and event != "push":
+        return {"accepted": False, "reason": f"unsupported_event:{event}"}
+    payload = json.loads(body.decode("utf-8") or "{}")
+    background.add_task(_handle_github_push, payload)
+    return {"accepted": True}
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -274,6 +300,167 @@ def _run_gate(gate: str, request: RunGateRequest, session: Session) -> dict[str,
     except Exception:  # noqa: BLE001
         update_run_status(session, run.id, "failed")
         raise
+
+
+def _verify_github_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    provided = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, provided)
+
+
+def _handle_github_push(payload: dict[str, object]) -> None:
+    ref = str(payload.get("ref") or "")
+    if not ref.startswith("refs/heads/"):
+        return
+    branch = ref.removeprefix("refs/heads/")
+    repository = payload.get("repository") or {}
+    if not isinstance(repository, dict):
+        return
+    remote_url = repository.get("clone_url")
+    repo_name = repository.get("name")
+    if not remote_url or not repo_name:
+        return
+    remote_url_value = _apply_git_token(str(remote_url))
+    commit_sha = str(payload.get("after") or "") or None
+    owner = repository.get("owner", {}).get("name") or repository.get("owner", {}).get("login")
+
+    for gate in VALID_LAYERS:
+        _checkout_build_run_gate(
+            remote_url=remote_url_value,
+            directory_name=str(repo_name),
+            branch=branch,
+            gate=gate,
+            commit_sha=commit_sha,
+            owner=str(owner) if owner else None,
+            repo_name=str(repo_name),
+        )
+
+
+def _set_github_commit_status(
+    owner: str | None,
+    repo_name: str | None,
+    commit_sha: str | None,
+    gate: str,
+    state: str,
+    description: str,
+) -> None:
+    if not settings.github_token or not owner or not repo_name or not commit_sha:
+        return
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/statuses/{commit_sha}"
+    headers = {
+        "Authorization": f"Bearer {settings.github_token}",
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {
+        "state": state,
+        "description": description[:140],
+        "context": f"regression/{gate}",
+    }
+    try:
+        response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
+        response.raise_for_status()
+    except Exception as exc:
+        logging.warning(f"Failed to post GitHub status for {commit_sha}: {exc}")
+
+
+def _checkout_build_run_gate(
+    remote_url: str,
+    directory_name: str,
+    branch: str,
+    gate: str,
+    commit_sha: str | None,
+    owner: str | None = None,
+    repo_name: str | None = None,
+) -> None:
+    _set_github_commit_status(owner, repo_name, commit_sha, gate, "pending", f"Waiting for runner slot for {gate}")
+    with SessionLocal() as session:
+        run = create_run(
+            session,
+            repository=directory_name,
+            gate=gate,
+            trigger="github-webhook",
+            commit_sha=commit_sha,
+            branch=branch,
+            status="waiting",
+        )
+        capacity = RunnerCapacityManager(
+            session_factory=SessionLocal,
+            runner_slots=settings.runner_slots,
+            poll_seconds=settings.queue_poll_seconds,
+            timeout_seconds=settings.queue_timeout_seconds,
+        )
+        if not capacity.wait_for_slot(run.id):
+            update_run_status(session, run.id, "timed_out")
+            _set_github_commit_status(owner, repo_name, commit_sha, gate, "error", "Timed out waiting for runner slot")
+            return
+        try:
+            _set_github_commit_status(owner, repo_name, commit_sha, gate, "pending", f"Running {gate} regression")
+            checkout = GitRepositoryManager().checkout(
+                CheckoutRequest(
+                    remote_url=remote_url,
+                    branch=branch,
+                    workspace_root=Path(settings.webhook_workspace_root),
+                    directory_name=directory_name,
+                    clean=settings.webhook_clean_workspace,
+                )
+            )
+            repo_root = checkout.repo_root
+            repo_config = load_repository_config(repo_root)
+            upsert_repository(session, repo_config.repository, remote_url, repo_config.owner)
+            run_record = session.get(ExecutionRun, run.id)
+            if run_record is not None:
+                run_record.repository = repo_config.repository
+                run_record.commit_sha = checkout.commit_sha
+                session.commit()
+            gate_decision = resolve_gate_decision(repo_root, gate, branch)
+            if not gate_decision.enabled:
+                update_run_status(session, run.id, "skipped")
+                _set_github_commit_status(owner, repo_name, commit_sha, gate, "success", f"Skipped: {gate_decision.reason or 'disabled'}")
+                return
+            policy = resolve_branch_policy(repo_root, branch)
+            orchestrator = BuildOrchestrator()
+            orchestrator.run(repo_root, repo_config, policy)
+            orchestrator.run_pre_test(repo_root, repo_config, policy)
+            try:
+                tests = TestDiscovery().discover(repo_root=repo_root, gate=gate, branch=branch)
+                results = ExecutionEngine().run(tests)
+                results_dir = (
+                    Path(settings.webhook_results_root)
+                    / repo_config.repository
+                    / branch
+                    / checkout.commit_sha
+                    / gate
+                )
+                ReportWriter().write(results, results_dir)
+                if settings.webhook_publish:
+                    finalize_run(session, run.id, results)
+                else:
+                    update_run_status(session, run.id, "failed" if should_fail_gate(results) else "passed")
+                if should_fail_gate(results):
+                    _set_github_commit_status(owner, repo_name, commit_sha, gate, "failure", f"{gate} regression failed")
+                else:
+                    _set_github_commit_status(owner, repo_name, commit_sha, gate, "success", f"{gate} regression passed")
+            finally:
+                orchestrator.run_post_test(repo_root, repo_config, policy)
+        except Exception as exc:  # noqa: BLE001
+            update_run_status(session, run.id, "failed")
+            _set_github_commit_status(owner, repo_name, commit_sha, gate, "error", f"Internal error running {gate}: {exc}")
+            raise
+
+
+def _apply_git_token(remote_url: str) -> str:
+    token = settings.github_token
+    if not token:
+        return remote_url
+    parsed = urlparse(remote_url)
+    if parsed.scheme not in {"http", "https"}:
+        return remote_url
+    if "@" in parsed.netloc:
+        return remote_url
+    return urlunparse(parsed._replace(netloc=f"x-access-token:{token}@{parsed.netloc}"))
 
 
 _DASHBOARD_HTML = """

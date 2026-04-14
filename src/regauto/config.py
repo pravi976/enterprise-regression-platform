@@ -44,10 +44,16 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./regression.db"
     log_level: str = "INFO"
     api_key: str | None = None
+    github_webhook_secret: str | None = None
+    github_token: str | None = None
     max_parallel_tests: int = 1
     runner_slots: int = 1
     queue_poll_seconds: float = 2.0
     queue_timeout_seconds: int = 900
+    webhook_workspace_root: str = "./regression-workspaces"
+    webhook_results_root: str = "./regression-results"
+    webhook_clean_workspace: bool = True
+    webhook_publish: bool = True
 
     model_config = SettingsConfigDict(env_prefix="REGAUTO_", env_file=".env", extra="ignore")
 

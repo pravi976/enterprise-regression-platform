@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import cast
 
 from sqlalchemy.orm import Session
 
@@ -87,8 +88,8 @@ def persist_run(
         commit_sha=commit_sha,
         branch=branch,
         status="failed" if should_fail_gate(results) else "passed",
-        pass_rate=float(summary["pass_rate"]),
-        total=int(summary["total"]),
+        pass_rate=float(cast(float, summary["pass_rate"])),
+        total=int(cast(int, summary["total"])),
         finished_at=datetime.now(UTC),
     )
     for item in results:
@@ -127,8 +128,8 @@ def finalize_run(
     run.results.clear()
     summary = summarize(results)
     run.status = "failed" if should_fail_gate(results) else "passed"
-    run.pass_rate = float(summary["pass_rate"])
-    run.total = int(summary["total"])
+    run.pass_rate = float(cast(float, summary["pass_rate"]))
+    run.total = int(cast(int, summary["total"]))
     run.finished_at = datetime.now(UTC)
     for item in results:
         differences = None

@@ -112,7 +112,11 @@ def _write_github_step_summary(results: list[TestExecutionResult], output_dir: P
             f"| {result.status.upper()} | {result.gate} | {result.service} | "
             f"{result.service_type} | `{result.test_id}` | {metadata_link} |"
         )
-    failed_results = [result for result in results if result.comparison and result.comparison.differences]
+    failed_results: list[TestExecutionResult] = []
+    for result in results:
+        comparison = result.comparison
+        if comparison and comparison.differences:
+            failed_results.append(result)
     if failed_results:
         lines.extend(
             [
@@ -124,7 +128,10 @@ def _write_github_step_summary(results: list[TestExecutionResult], output_dir: P
             ]
         )
         for result in failed_results:
-            for difference in result.comparison.differences:
+            comparison = result.comparison
+            if not comparison:
+                continue
+            for difference in comparison.differences:
                 lines.append(
                     f"| `{result.test_id}` | `{difference.path}` | "
                     f"`{_compact_json(difference.expected)}` | `{_compact_json(difference.actual)}` | "

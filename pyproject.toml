@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff>=0.4.0", "mypy>=1.9.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.4.0", "mypy>=1.9.0", "types-PyYAML"]
 
 [project.scripts]
 regauto = "regauto.cli:app"
