@@ -1,0 +1,5 @@
+default_branch: main
+policies:
+  main:
+    environment: DEV
+    gates: [level3, level4, level5]

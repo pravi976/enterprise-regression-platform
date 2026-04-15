@@ -1,0 +1,19 @@
+repository: jms-mq-producer
+default_branch: main
+services_root: regression/services
+build_tool: gradle
+health_check:
+  urls:
+    - http://localhost:8093/api/jms/ops/status
+commands:
+  pre_build:
+    - 'chmod +x ./gradlew'
+  build:
+    - './gradlew --gradle-user-home .gradle-home clean test bootJar'
+  post_build: []
+  pre_test: []
+  post_test: []
+gate_policies:
+  level1:
+    enabled: true
+    reason: JMS producer smoke regression is active

@@ -1,0 +1,8 @@
+id: JMS_PRODUCER_TC001_PUBLISH
+team: banking-jms
+service_type: python
+branches: [main]
+tags: [level1, jms, producer]
+python:
+  script: regression/executors/jms_mq_producer.py
+  function: execute

@@ -1,0 +1,6 @@
+{
+  "transactionId": "TX-1001",
+  "accountId": "ACC-9001",
+  "amount": 1250.50,
+  "currency": "INR"
+}

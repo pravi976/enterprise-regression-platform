@@ -1,0 +1,26 @@
+repository: jms-mq-consumer
+default_branch: main
+services_root: regression/services
+build_tool: gradle
+health_check:
+  urls:
+    - http://localhost:8093/api/jms/ops/status
+    - http://localhost:8094/api/jms/ops/status
+commands:
+  pre_build:
+    - 'chmod +x ./gradlew'
+  build:
+    - './gradlew --gradle-user-home .gradle-home clean test bootJar'
+  post_build: []
+  pre_test: []
+  post_test: []
+gate_policies:
+  level3:
+    enabled: true
+    reason: JMS consumer integration regression is active
+  level4:
+    enabled: true
+    reason: JMS consumer end-to-end regression is active
+  level5:
+    enabled: true
+    reason: JMS consumer operational regression is active

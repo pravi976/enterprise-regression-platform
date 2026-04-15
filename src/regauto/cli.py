@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from typing import Annotated
 
+import httpx
+import structlog
 import typer
 from rich.console import Console
 
@@ -30,6 +34,70 @@ from regauto.source_control import CheckoutRequest, GitRepositoryManager
 
 app = typer.Typer(help="Enterprise regression automation CLI")
 console = Console()
+LOGGER = structlog.get_logger()
+
+
+def _resolve_assets_root(
+    assets_root: Path | None,
+    repo_root: Path | None = None,
+    directory_name: str | None = None,
+) -> Path | None:
+    if assets_root is not None:
+        return assets_root
+    env_value = os.getenv("REGAUTO_ASSETS_ROOT")
+    if env_value:
+        candidate = Path(env_value).expanduser()
+        if candidate.exists():
+            return candidate
+    workspace = os.getenv("GITHUB_WORKSPACE")
+    suite_name = directory_name or (repo_root.name if repo_root else None)
+    if workspace and suite_name:
+        candidate = (Path(workspace) / "enterprise-regression-platform" / "suites" / suite_name).resolve()
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _write_error_result(results_dir: Path, gate: str | None, branch: str | None, reason: str) -> None:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "gate": gate,
+        "branch": branch,
+        "status": "error",
+        "reason": reason,
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "errored": 1,
+        "pass_rate": 0.0,
+    }
+    (results_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (results_dir / "results.json").write_text("[]", encoding="utf-8")
+    (results_dir / "junit.xml").write_text(
+        "<?xml version='1.0' encoding='utf-8'?>\n"
+        "<testsuite name=\"enterprise-regression\" tests=\"0\" failures=\"0\" errors=\"1\" />",
+        encoding="utf-8",
+    )
+    console.print(summary)
+
+
+def _wait_for_health(url: str, retries: int, delay_seconds: float, timeout_seconds: float) -> bool:
+    for attempt in range(max(1, retries)):
+        try:
+            response = httpx.get(url, timeout=timeout_seconds)
+            if 200 <= response.status_code < 300:
+                try:
+                    payload = response.json()
+                    status_value = payload.get("status") if isinstance(payload, dict) else None
+                    if status_value is None or str(status_value).upper() in {"UP", "OK"}:
+                        return True
+                except Exception:
+                    return True
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            time.sleep(max(0.0, delay_seconds))
+    return False
 
 
 def _run(
@@ -46,6 +114,7 @@ def _run(
     exclude_tags: list[str] | None = None,
 ) -> None:
     configure_logging()
+    assets_root = _resolve_assets_root(assets_root, repo_root=repo_root)
     gate = canonical_gate_name(gate)
     gate_decision = resolve_gate_decision(repo_root, gate, branch, assets_root)
     if not gate_decision.enabled:
@@ -65,6 +134,21 @@ def _run(
         (results_dir / "summary.json").write_text(json.dumps(skipped_summary, indent=2), encoding="utf-8")
         console.print(skipped_summary)
         raise typer.Exit(code=0)
+    repo_config = load_repository_config(repo_root, assets_root)
+    if repo_config.health_check.urls:
+        for url in [str(item) for item in repo_config.health_check.urls]:
+            LOGGER.info("health_check_start", url=url, repo=str(repo_root), gate=gate, branch=branch)
+            ok = _wait_for_health(
+                url=url,
+                retries=repo_config.health_check.retries,
+                delay_seconds=repo_config.health_check.delay_seconds,
+                timeout_seconds=repo_config.health_check.timeout_seconds,
+            )
+            if not ok:
+                message = f"application is down: health check failed for {url}"
+                LOGGER.error("health_check_failed", url=url, repo=str(repo_root), gate=gate, branch=branch)
+                _write_error_result(results_dir, gate, branch, message)
+                raise typer.Exit(code=2)
     policy = resolve_branch_policy(repo_root, branch, assets_root)
     effective_tags = set(tags or [])
     effective_tags.update(policy.include_tags)
@@ -136,7 +220,7 @@ def _run(
     if publish:
         create_schema()
         with SessionLocal() as session:
-            repo_name = load_repository_config(repo_root).repository
+            repo_name = load_repository_config(repo_root, assets_root).repository
             persist_run(session, repo_name, gate or "full", trigger, results, commit_sha, branch)
     if should_fail_gate(results):
         raise typer.Exit(code=1)
@@ -155,6 +239,7 @@ def _checkout_build_and_run(
     clean: bool,
 ) -> None:
     configure_logging()
+    assets_root = _resolve_assets_root(assets_root, directory_name=directory_name)
     gate = canonical_gate_name(gate) or gate
     checkout = GitRepositoryManager().checkout(
         CheckoutRequest(
@@ -213,6 +298,7 @@ def _build_and_run_existing_repo(
 ) -> None:
     configure_logging()
     repo_root = repo_root.resolve()
+    assets_root = _resolve_assets_root(assets_root, repo_root=repo_root)
     gate = canonical_gate_name(gate) or gate
     gate_decision = resolve_gate_decision(repo_root, gate, branch, assets_root)
     if not gate_decision.enabled:
@@ -257,13 +343,24 @@ def add_repo(
 @app.command("discover-tests")
 def discover_tests(
     repo_root: Annotated[Path, typer.Option(help="Application repository root")],
+    assets_root: Annotated[
+        Path | None,
+        typer.Option(help="Optional external assets root containing regression/ config and services"),
+    ] = None,
     gate: Annotated[str | None, typer.Option(help="Optional gate filter")] = None,
     tag: Annotated[list[str] | None, typer.Option("--tag", help="Tag filter")] = None,
     service: Annotated[list[str] | None, typer.Option("--service", help="Service filter")] = None,
 ) -> None:
     """Discover folder-based regression tests."""
     configure_logging()
-    tests = TestDiscovery().discover(repo_root, gate=gate, tags=set(tag or []), services=set(service or []))
+    assets_root = _resolve_assets_root(assets_root, repo_root=repo_root)
+    tests = TestDiscovery().discover(
+        repo_root,
+        assets_root=assets_root,
+        gate=gate,
+        tags=set(tag or []),
+        services=set(service or []),
+    )
     for test in tests:
         console.print(f"{test.id} | {test.service} | {test.gate} | {','.join(test.tags)}")
 

@@ -103,6 +103,13 @@ class GateDecision(BaseModel):
     reason: str | None = None
 
 
+class HealthCheckConfig(BaseModel):
+    urls: list[HttpUrl] = Field(default_factory=list)
+    timeout_seconds: float = 2.0
+    retries: int = 30
+    delay_seconds: float = 1.0
+
+
 class RepositoryConfig(BaseModel):
     """Repository-level regression configuration."""
 
@@ -126,6 +133,7 @@ class RepositoryConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
     service_owners: dict[str, str] = Field(default_factory=dict)
     impact_map: dict[str, list[str]] = Field(default_factory=dict)
+    health_check: HealthCheckConfig = Field(default_factory=HealthCheckConfig)
 
 
 class RestExecutorConfig(BaseModel):

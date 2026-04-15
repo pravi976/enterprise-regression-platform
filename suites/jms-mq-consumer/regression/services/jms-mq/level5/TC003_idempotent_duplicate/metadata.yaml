@@ -1,0 +1,8 @@
+id: JMS_CONSUMER_TC003_IDEMPOTENT
+team: banking-jms
+service_type: python
+branches: [main]
+tags: [level5, jms, consumer]
+python:
+  script: regression/executors/jms_mq_flow.py
+  function: execute

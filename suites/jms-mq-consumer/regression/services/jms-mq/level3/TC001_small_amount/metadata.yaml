@@ -1,0 +1,8 @@
+id: JMS_CONSUMER_TC001_SMALL_AMOUNT
+team: banking-jms
+service_type: python
+branches: [main]
+tags: [level3, jms, consumer]
+python:
+  script: regression/executors/jms_mq_flow.py
+  function: execute

@@ -3,6 +3,9 @@ owner: platform-regression
 default_branch: develop
 services_root: regression/services
 build_tool: gradle
+health_check:
+  urls:
+    - http://localhost:8091/api/upstream/ops/status
 commands:
   pre_build:
     - 'chmod +x ./gradlew'
