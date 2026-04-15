@@ -11,8 +11,38 @@ commands:
   build:
     - './gradlew --gradle-user-home .gradle-home clean test bootJar'
   post_build: []
-  pre_test: []
-  post_test: []
+  pre_test:
+    - |
+      set -e
+      JAR_PATH="$(ls -1 build/libs/jms-mq-producer-*.jar 2>/dev/null | head -n 1)"
+      if [ -z "$JAR_PATH" ]; then
+        echo "Producer jar not found under build/libs" >&2
+        ls -la build/libs || true
+        exit 1
+      fi
+      java -jar "$JAR_PATH" >/dev/null 2>&1 &
+      echo $! > .regauto-producer.pid
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8093/api/jms/ops/status" >/dev/null 2>&1; then
+          exit 0
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      echo "producer app did not become ready" >&2
+      exit 1
+  post_test:
+    - |
+      set +e
+      if [ -f .regauto-producer.pid ]; then
+        PID="$(cat .regauto-producer.pid)"
+        kill "$PID" >/dev/null 2>&1
+        sleep 1
+        kill -9 "$PID" >/dev/null 2>&1
+        rm -f .regauto-producer.pid
+      fi
+      exit 0
 gate_policies:
   level1:
     enabled: true
