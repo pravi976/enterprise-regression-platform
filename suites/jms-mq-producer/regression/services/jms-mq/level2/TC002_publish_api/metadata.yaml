@@ -1,0 +1,8 @@
+id: JMS_PRODUCER_TC002_PUBLISH_API
+team: banking-jms
+service_type: python
+branches: [main]
+tags: [level2, jms, producer, api]
+python:
+  script: regression/executors/jms_mq_producer.py
+  function: execute

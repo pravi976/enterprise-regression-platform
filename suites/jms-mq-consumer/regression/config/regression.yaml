@@ -12,8 +12,76 @@ commands:
   build:
     - './gradlew --gradle-user-home .gradle-home clean test bootJar'
   post_build: []
-  pre_test: []
-  post_test: []
+  pre_test:
+    - |
+      set -e
+      PRODUCER_REPO="${GITHUB_WORKSPACE}/jms-mq-producer"
+      if [ ! -d "$PRODUCER_REPO" ]; then
+        echo "producer repo was not checked out into $PRODUCER_REPO" >&2
+        exit 1
+      fi
+      chmod +x "$PRODUCER_REPO/gradlew"
+      (
+        cd "$PRODUCER_REPO"
+        ./gradlew --gradle-user-home .gradle-home clean bootJar >/dev/null
+        PRODUCER_JAR_PATH="$(ls -1 build/libs/jms-mq-producer-*.jar 2>/dev/null | head -n 1)"
+        if [ -z "$PRODUCER_JAR_PATH" ]; then
+          echo "Producer jar not found under build/libs" >&2
+          ls -la build/libs || true
+          exit 1
+        fi
+        java -jar "$PRODUCER_JAR_PATH" >/dev/null 2>&1 &
+        echo $! > .regauto-jms-producer.pid
+      )
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8093/api/jms/ops/status" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      if [ $i -ge 60 ]; then
+        echo "producer app did not become ready" >&2
+        exit 1
+      fi
+
+      CONSUMER_JAR_PATH="$(ls -1 build/libs/jms-mq-consumer-*.jar 2>/dev/null | head -n 1)"
+      if [ -z "$CONSUMER_JAR_PATH" ]; then
+        echo "Consumer jar not found under build/libs" >&2
+        ls -la build/libs || true
+        exit 1
+      fi
+      java -jar "$CONSUMER_JAR_PATH" >/dev/null 2>&1 &
+      echo $! > .regauto-consumer.pid
+      i=0
+      while [ $i -lt 60 ]; do
+        if curl -fsS "http://localhost:8094/api/jms/ops/status" >/dev/null 2>&1; then
+          exit 0
+        fi
+        sleep 1
+        i=$((i+1))
+      done
+      echo "consumer app did not become ready" >&2
+      exit 1
+  post_test:
+    - |
+      set +e
+      if [ -f "${GITHUB_WORKSPACE}/jms-mq-producer/.regauto-jms-producer.pid" ]; then
+        PID="$(cat "${GITHUB_WORKSPACE}/jms-mq-producer/.regauto-jms-producer.pid")"
+        kill "$PID" >/dev/null 2>&1
+        sleep 1
+        kill -9 "$PID" >/dev/null 2>&1
+        rm -f "${GITHUB_WORKSPACE}/jms-mq-producer/.regauto-jms-producer.pid"
+      fi
+      if [ -f .regauto-consumer.pid ]; then
+        PID="$(cat .regauto-consumer.pid)"
+        kill "$PID" >/dev/null 2>&1
+        sleep 1
+        kill -9 "$PID" >/dev/null 2>&1
+        rm -f .regauto-consumer.pid
+      fi
+      exit 0
 gate_policies:
   level3:
     enabled: true

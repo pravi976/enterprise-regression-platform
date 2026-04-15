@@ -17,3 +17,6 @@ gate_policies:
   level1:
     enabled: true
     reason: JMS producer smoke regression is active
+  level2:
+    enabled: true
+    reason: JMS producer API regression is active

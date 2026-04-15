@@ -2,4 +2,4 @@ default_branch: main
 policies:
   main:
     environment: DEV
-    gates: [level1]
+    gates: [level1, level2]
